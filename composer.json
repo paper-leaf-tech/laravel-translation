@@ -1,0 +1,23 @@
+{
+    "name": "paper-leaf-tech/laravel-translation-csv",
+    "description": "Manage laravel translation strings using CSVs",
+    "license": "MIT",
+    "require": {
+      "php": "^8.2",
+      "spatie/laravel-package-tools": "^1.92"
+    },
+    "autoload": {
+        "psr-4": {
+            "PaperleafTech\\LaravelTranslationCsv\\": "src"
+        }
+    },
+    "authors": [
+        {
+            "name": "Brendan Angermna",
+            "email": "brendan@paper-leaf.com"
+        }
+    ],
+    "require-dev": {
+      "laravel/pint": "^1.24"
+    }
+}
