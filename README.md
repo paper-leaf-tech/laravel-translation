@@ -17,7 +17,7 @@ Manage Laravel translation strings using Google Sheets. This package allows you 
 Install the package via Composer:
 
 First, you'll need to make composer able to see this project. Add the following to your composer.json before trying to require it:
-```
+```json
 "repositories": [
     {
         "type": "github",
@@ -26,6 +26,7 @@ First, you'll need to make composer able to see this project. Add the following 
 ],
 ```
 
+Install via Composer:
 ```bash
 composer require paper-leaf-tech/laravel-translation --dev
 ```
