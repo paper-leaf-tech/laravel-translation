@@ -277,12 +277,13 @@ class ExportCommand extends Command
                 $existingUpdated = $existingData[$key]['updated'];
 
                 if ($newOriginal === $existingOriginal) {
-                    // Original unchanged - preserve existing Updated Value
-                    $data[] = [$key, $newOriginal, $existingUpdated];
+                    // Original unchanged in code - preserve existing Updated Value
+                    $data[] = [$key, $existingOriginal, $existingUpdated];
                     $stats['unchanged']++;
                 } else {
-                    // Original changed - auto-update Updated Value to new original
-                    $data[] = [$key, $newOriginal, $newOriginal];
+                    // Original changed in code - keep the sheet's Original Value (baseline)
+                    // but update the Updated Value to reflect the new code state
+                    $data[] = [$key, $existingOriginal, $newOriginal];
                     $stats['changed']++;
                 }
             } else {
