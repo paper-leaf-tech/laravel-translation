@@ -1,20 +1,20 @@
 <?php
 
-namespace PaperleafTech\LaravelTranslationCsv;
+namespace PaperleafTech\LaravelTranslation;
 
-use PaperleafTech\LaravelTranslationCsv\Commands\ExportCommand;
-use PaperleafTech\LaravelTranslationCsv\Commands\ImportCommand;
+use PaperleafTech\LaravelTranslation\Commands\ExportCommand;
+use PaperleafTech\LaravelTranslation\Commands\ImportCommand;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
-class LaravelTranslationCsvServiceProvider extends PackageServiceProvider
+class LaravelTranslationServiceProvider extends PackageServiceProvider
 {
     public function configurePackage(Package $package): void
     {
         $package
-            ->name('laravel-translation-csv')
-            ->hasConfigFile('laravel-translation-csv')
+            ->name('laravel-translation')
+            ->hasConfigFile('laravel-translation')
             ->hasCommands([
                 ExportCommand::class,
                 ImportCommand::class,
