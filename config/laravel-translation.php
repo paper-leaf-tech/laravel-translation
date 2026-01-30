@@ -96,4 +96,20 @@ return [
     |
     */
     'header_row' => 1,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Backup Settings
+    |--------------------------------------------------------------------------
+    |
+    | Configure backup behavior when pushing translations.
+    |
+    */
+    'backup' => [
+        // Number of backups to keep (older backups will be automatically deleted)
+        'keep' => env('GOOGLE_SHEETS_BACKUP_KEEP', 5),
+
+        // Automatically prune old backups after creating a new one
+        'auto_prune' => env('GOOGLE_SHEETS_BACKUP_AUTO_PRUNE', true),
+    ],
 ];

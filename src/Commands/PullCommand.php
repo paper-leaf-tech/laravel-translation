@@ -51,6 +51,11 @@ class PullCommand extends Command
             $this->writeTranslations($langPath, $translations);
 
             $this->info('✓ Translations pulled successfully!');
+            $this->line('');
+
+            $spreadsheetUrl = $this->sheetsService->getSpreadsheetUrl();
+            $this->info("View your spreadsheet: {$spreadsheetUrl}");
+            $this->line('');
 
             return self::SUCCESS;
         } catch (\Exception $e) {

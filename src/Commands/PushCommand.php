@@ -51,16 +51,23 @@ class PushCommand extends Command
             // Create backup by default (unless --no-backup or sheet is empty)
             if (! $this->option('no-backup') && ! $isSheetEmpty) {
                 $this->info('Creating backup sheet...');
-                $backupName = $this->sheetsService->createBackup();
-                $this->info("Backup created: {$backupName}");
 
-                // Prune old backups
-                $deleted = $this->sheetsService->pruneBackups(5);
-                if ($deleted > 0) {
-                    $this->info("Pruned {$deleted} old backup(s).");
+                try {
+                    $backupName = $this->sheetsService->createBackup();
+                    $this->info("✓ Backup created: {$backupName}");
+
+                    // Prune old backups if auto-prune is enabled
+                    if (config('laravel-translation.backup.auto_prune', true)) {
+                        $keepCount = config('laravel-translation.backup.keep', 5);
+                        $deleted = $this->sheetsService->pruneBackups($keepCount);
+                        if ($deleted > 0) {
+                            $this->info("  Pruned {$deleted} old backup(s) (keeping {$keepCount} most recent)");
+                        }
+                    }
+                } catch (\Exception $e) {
+                    $this->warn("Failed to create backup: {$e->getMessage()}");
+                    $this->warn("Continuing with push...");
                 }
-            } elseif ($isSheetEmpty) {
-                // $this->info('Skipping backup (sheet is empty).');
             }
 
             // Clear existing data if requested
@@ -95,6 +102,10 @@ class PushCommand extends Command
             $this->sheetsService->updateSheetData($range, $sheetData);
 
             $this->info('✓ Translations pushed successfully!');
+            $this->line('');
+
+            $spreadsheetUrl = $this->sheetsService->getSpreadsheetUrl();
+            $this->info("View your spreadsheet: {$spreadsheetUrl}");
             $this->line('');
 
             return self::SUCCESS;
