@@ -38,7 +38,7 @@ class GoogleSheetsServiceTest extends TestCase
         config()->set('laravel-translation.spreadsheet_id', null);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Google Sheets spreadsheet ID is not configured');
+        $this->expectExceptionMessage('TRANSLATION_SPREADSHEET_ID');
 
         $this->service->getSpreadsheetUrl();
     }
@@ -89,11 +89,20 @@ class GoogleSheetsServiceTest extends TestCase
     }
 
     /** @test */
-    public function it_throws_exception_for_invalid_keep_count_in_prune_backups(): void
+    public function it_qualifies_ranges_with_sheet_name(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('Keep count must be a positive integer');
+        $this->assertSame(
+            "'Translations - en'!A1:C",
+            GoogleSheetsService::qualifyRange('Translations - en', 'A1:C')
+        );
+    }
 
-        $this->service->pruneBackups(-1);
+    /** @test */
+    public function it_escapes_single_quotes_inside_sheet_names(): void
+    {
+        $this->assertSame(
+            "'it''s'!A1:C",
+            GoogleSheetsService::qualifyRange("it's", 'A1:C')
+        );
     }
 }

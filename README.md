@@ -1,37 +1,47 @@
 # Laravel Translation Manager
 
-Manage Laravel translation strings using Google Sheets. This package allows you to sync your Laravel translation files with a Google Spreadsheet, making it easy for non-technical team members to manage translations.
+Manage Laravel translation strings using Google Sheets. This package syncs your Laravel translation files with a Google Spreadsheet, making it easy for non-technical team members to manage translations.
+
+## Upgrading from 0.1.x
+
+0.2.0 contains breaking changes. See [`CHANGELOG.md`](CHANGELOG.md) for full details. Highlights:
+
+- All env vars renamed: `GOOGLE_SHEETS_*` → `TRANSLATION_*`.
+- `GOOGLE_SHEETS_SHEET_NAME` removed; each locale now uses a sheet tab named `Translations - {locale}` (auto-created).
+- Default credentials filename: `laravel-translation-credentials.json` (was `laravel-translations-account.json`). Either rename your file or set `TRANSLATION_CREDENTIALS_PATH`.
+- Backups are now local JSON files under `storage/app/translation-backups/`, not duplicate sheets in your spreadsheet.
+- For non-English sheets, Column B is now the **English source string** and Column C is the translation.
 
 ## Features
 
-- 🔄 **Bi-directional sync** - Push Laravel translations to Google Sheets and pull updates back
-- 🔐 **Service Account authentication** - Simple, secure authentication using Google service accounts
-- 📝 **Nested translations** - Automatically handles nested translation arrays using dot notation
-- 🌍 **Multi-language support** - Manage translations for any language
-- 🔍 **Dry-run mode** - Preview changes before applying them
-- 📋 **Three-column workflow** - Preserves original values while allowing content editors to manage updates
-- ✨ **Easy setup** - Simple configuration and installation process
+- 🔄 **Bi-directional sync** — Push Laravel translations to Google Sheets and pull updates back
+- 🌍 **Multi-language by default** — Run `translations:push` with no argument to sync every locale under `lang/`
+- 🔤 **Translator-friendly sheets** — Non-English sheets show the English source alongside each translation
+- 🔐 **Service Account authentication** — Simple, secure auth using Google service accounts
+- 📝 **Nested translations** — Automatically handles nested translation arrays using dot notation
+- 🗂️ **Local JSON backups** — Sheet snapshots saved to a gitignored folder before every push
+- 🔍 **Dry-run mode** — Preview pull changes before applying them
 
 ## Installation
 
-Install the package via Composer:
+Add the repo to your `composer.json`:
 
-First, you'll need to make composer able to see this project. Add the following to your composer.json before trying to require it:
 ```json
 "repositories": [
     {
         "type": "github",
         "url": "git@github.com:paper-leaf-tech/laravel-translation.git"
     }
-],
+]
 ```
 
 Install via Composer:
+
 ```bash
 composer require paper-leaf-tech/laravel-translation --dev
 ```
 
-Optionally, publish the configuration file:
+Optionally publish the configuration file:
 
 ```bash
 php artisan vendor:publish --tag=laravel-translation-config
@@ -41,218 +51,161 @@ php artisan vendor:publish --tag=laravel-translation-config
 
 ### 1. Download Service Account Credentials
 
-1. A service account with credentials has already been created under the tech@paper-leaf.com account.
-2. Check 1pass for "Laravel Translations Service Account" and save the note's content to `storage/app/laravel-translations-account.json`.
+1. A service account with credentials has been created under the tech@paper-leaf.com account.
+2. Check 1Password for "Laravel Translations Service Account" and save the note's content to `storage/app/laravel-translation-credentials.json`.
 
-> **Important**: By default this file should be git ignored, but you can explicitly ignore this by editting your project's `.gitignore`.
-
-```
-# .gitignore
-storage/app/laravel-translations-account.json
-```
+> **Important:** Make sure this file is gitignored:
+>
+> ```
+> # .gitignore
+> storage/app/laravel-translation-credentials.json
+> ```
 
 ### 2. Create and Share Your Google Sheet
 
-1. Create a new Google Spreadsheet or use an existing one
-2. Share the sheet with "laravel-translation-manager@laravel-translations-sheets.iam.gserviceaccount.com", granting edit access.
+1. Create a new Google Spreadsheet or use an existing one.
+2. Share the sheet with `laravel-translation-manager@laravel-translations-sheets.iam.gserviceaccount.com`, granting edit access.
 
 ### 3. Get Your Spreadsheet ID
 
 The spreadsheet ID is in the URL:
+
 ```
 https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_HERE/edit
 ```
-
-Copy the `SPREADSHEET_ID_HERE` portion.
 
 ## Configuration
 
 Add the following to your `.env` file:
 
 ```env
-# Your Google Spreadsheet ID (from the URL)
-GOOGLE_SHEETS_SPREADSHEET_ID="your-spreadsheet-id-here"
+TRANSLATION_SPREADSHEET_ID="your-spreadsheet-id-here"
 
-# Optional: Specify a sheet name (defaults to first sheet)
-GOOGLE_SHEETS_SHEET_NAME="Translations"
+# Optional: override the credentials path (default: storage_path('app/laravel-translation-credentials.json'))
+# TRANSLATION_CREDENTIALS_PATH="storage/app/laravel-translation-credentials.json"
+
+# Optional: backup behaviour. Set TRANSLATION_BACKUP_PATH to false (or null) to disable backups entirely.
+# TRANSLATION_BACKUP_PATH="app/translation-backups"
+# TRANSLATION_BACKUP_KEEP=5
+# TRANSLATION_BACKUP_AUTO_PRUNE=true
 ```
 
-### Advanced Configuration
+You can customize column letters, header row, and other settings by publishing `config/laravel-translation.php`.
 
-You can customize additional settings in `config/laravel-translation.php`:
+## Sheet layout
+
+Each locale gets its own sheet tab named `Translations - {locale}`. Tabs are created automatically on first push.
+
+**Source locale (`en`):**
+
+| Column A (Key) | Column B (Original Value) | Column C (Updated Value) |
+|---|---|---|
+| `auth.failed` | `These credentials do not match our records.` | (editor's revised wording) |
+
+**Other locales (e.g. `fr`):**
+
+| Column A (Key) | Column B (English Source) | Column C (Translation) |
+|---|---|---|
+| `auth.failed` | `These credentials do not match our records.` | `Identifiants invalides.` |
+
+On pull for a non-source locale, rows with an empty Column C are skipped — they aren't translated yet, so they fall through to Laravel's `fallback_locale` at runtime instead of being written as English into the target file.
 
 ## Usage
 
-### Push Translations to Google Sheets
-
-Push your Laravel translation files to Google Sheets:
+### Push translations to Google Sheets
 
 ```bash
-# Push English translations (automatically creates a backup)
+# Push every locale under lang/
+php artisan translations:push
+
+# Push a single locale
 php artisan translations:push en
 
-# Push without creating a backup
-php artisan translations:push en --no-backup
+# Skip backups for this run
+php artisan translations:push --no-backup
 
-# Push other languages
-php artisan translations:push es
-
-# Clear existing sheet data before push
+# Clear and re-initialize the sheet
 php artisan translations:push en --clear
 ```
 
-This command will:
-- Read all translation files from `lang/en/` (or your specified language)
-- Flatten nested arrays using dot notation (e.g., `auth.failed` → `auth.failed`)
-- Write the data to your Google Sheet with three columns:
-  - **Column A (Key)**: Translation key in dot notation
-  - **Column B (Original Value)**: The original translation value (preserved for reference)
-  - **Column C (Updated Value)**: Initially same as original, this is where content editors make changes
+When iterating multiple locales, the source locale (`en`) is always pushed first so its strings are available to populate Column B in the other sheets.
 
-### Pull Translations from Google Sheets
-
-Pull updated translations from Google Sheets back to Laravel:
+### Pull translations from Google Sheets
 
 ```bash
-# Pull English translations
-php artisan translations:pull en
+# Pull every locale that has a directory under lang/
+php artisan translations:pull
 
-# Preview changes without writing files
-php artisan translations:pull en --dry-run
+# Pull a single locale
+php artisan translations:pull fr
+
+# Preview without writing files
+php artisan translations:pull --dry-run
 ```
 
-This command will:
-- Read data from your Google Sheet (columns A, B, and C)
-- Prioritize values from **Column C (Updated Value)**, falling back to **Column B (Original Value)** if Column C is empty
-- Parse dot notation back into nested arrays
-- Create/update translation files in `lang/en/`
+Pull discovery scans `lang/` directories. Locales without a matching `Translations - {locale}` sheet tab are skipped with a warning — only locales whose tab exists in the spreadsheet get pulled.
 
-### Translation File Structure
+## Backups
 
-The package handles nested translations automatically. For example:
+Before each push, the existing rows on the locale's sheet are snapshotted as a JSON file:
 
-**Google Sheet:**
 ```
-Key                    | Original Value                              | Updated Value
------------------------|---------------------------------------------|---------------------------------------------
-auth.failed           | These credentials do not match our records. | These credentials do not match our records.
-auth.throttle         | Too many login attempts.                    | Too many login attempts. Please wait.
-validation.required   | The :attribute field is required.           | The :attribute field is required.
+storage/app/translation-backups/
+├── .gitignore           ← package writes this on first run (contents: "*\n!.gitignore")
+├── en/
+│   ├── 2026-05-08_143012.json
+│   └── 2026-05-08_152244.json
+└── fr/
+    └── 2026-05-08_143015.json
 ```
 
-> **Note**: Content editors work in the "Updated Value" column (C). The "Original Value" column (B) is preserved for reference.
+`TRANSLATION_BACKUP_KEEP` controls retention per locale (default 5). `TRANSLATION_BACKUP_AUTO_PRUNE` toggles auto-pruning of older snapshots. Set `TRANSLATION_BACKUP_PATH=false` (or `null`) in `.env` to disable backups entirely; the `--no-backup` flag still works as a one-off override.
 
-**Generated Laravel file** (`lang/en/auth.php`):
-```php
-<?php
+## Workflow
 
-return [
-    'failed' => 'These credentials do not match our records.',
-    'throttle' => 'Too many login attempts. Please wait.',  // Uses updated value from column C
-];
-```
-
-**Generated Laravel file** (`lang/en/validation.php`):
-```php
-<?php
-
-return [
-    'required' => 'The :attribute field is required.',
-];
-```
-
-## Workflow Example
-
-### Initial Setup
-1. Push your existing Laravel translations to Google Sheets:
-   ```bash
-   php artisan translations:push en
-   ```
-   This creates three columns:
-   - **Column A**: Translation keys (e.g., `auth.failed`)
-   - **Column B**: Original values (preserved for reference)
-   - **Column C**: Updated values (initially same as Column B)
-
-2. Share the Google Sheet with your team members
-
-### Making Updates
-1. Content editors modify translations in **Column C (Updated Value)**
-   - Column B remains unchanged for reference
-   - If Column C is empty, the pull will use Column B's value
-
-2. Pull the updates:
-   ```bash
-   # Preview changes first
-   php artisan translations:pull en --dry-run
-   
-   # Apply changes
-   php artisan translations:pull en
-   ```
-
-3. Commit the updated translation files to your repository
-
-### Best Practices
-- **Never edit Column B (Original Value)** - This preserves the baseline translations
-- **Make all edits in Column C (Updated Value)** - This is where content editors work
-- **Leave Column C empty** to use the original value from Column B
-- **Re-push periodically** to sync new translation keys added in code
+1. **Initial push** — `php artisan translations:push` from a project that already has `lang/en/` (and optionally `lang/fr/`, etc.). Each locale gets its own tab.
+2. **Translators work in the sheet** — non-source tabs show English in Column B and let translators fill Column C.
+3. **Pull** — `php artisan translations:pull` writes Column C back to the matching `lang/{locale}/*.php` files. Untranslated rows are left alone.
+4. **Re-push** when you add new keys to your code. Column C is preserved for keys whose English hasn't changed; if English changes, the row is flagged "review needed" in the command output but the existing translation is kept.
 
 ## Troubleshooting
 
-### Permission Denied Error
+### Permission Denied
 
 **Error:** `Permission denied accessing Google Sheet`
-
-**Solution:** Ensure you've shared the Google Sheet with your service account email address. You can find this email in your credentials JSON file under the `client_email` field.
+**Solution:** Share the spreadsheet with the service account email (`client_email` in your credentials JSON).
 
 ### Credentials File Not Found
 
 **Error:** `Google Sheets credentials file not found`
+**Solution:** Confirm the path in `TRANSLATION_CREDENTIALS_PATH` (or the default `storage/app/laravel-translation-credentials.json`) and that the file is readable.
 
-**Solution:** 
-- Verify the path in your `.env` file is correct
-- Ensure the JSON file exists at the specified location
-- Check file permissions
-
-### Invalid Credentials
+### Invalid Credentials JSON
 
 **Error:** `Google Sheets credentials file contains invalid JSON`
-
-**Solution:** 
-- Re-download the service account JSON file from 1Password
-- Ensure you selected "JSON" format when creating the key
-- Verify the file is a valid service account credential (should have `"type": "service_account"`)
+**Solution:** Re-download the service account JSON from Google Cloud Console / 1Password. The file must contain `"type": "service_account"`.
 
 ### Sheet Not Found
 
 **Error:** `Google Sheet not found`
+**Solution:** Verify `TRANSLATION_SPREADSHEET_ID` and that the service account has editor access.
 
-**Solution:**
-- Verify the spreadsheet ID in your configuration
-- Ensure the spreadsheet hasn't been deleted
-- Check that the service account has editor access to the sheet
+## Security
 
-## Security Considerations
-
-- **Never commit your service account JSON file** to version control
-- Store credentials in `storage/app/` which is typically excluded from version control
-- Use environment variables for configuration
+- **Never commit your service account JSON file** to version control.
+- Store credentials under `storage/app/` and ensure your `.gitignore` excludes them.
 
 ## Requirements
 
-- PHP 8.2 or higher
-- Laravel 10.x or higher
+- PHP 8.2+
+- Laravel 11.x+
 
 ## License
 
-This package is open-sourced software licensed under the [MIT license](LICENSE.md).
+MIT — see [LICENSE.md](LICENSE.md).
 
 ## Credits
 
 - [Brendan Angerman](https://github.com/bAngerman)
 - Built with [Spatie Laravel Package Tools](https://github.com/spatie/laravel-package-tools)
 - Uses [Google API PHP Client](https://github.com/googleapis/google-api-php-client)
-
-## Support
-
-If you discover any issues or have questions, please [open an issue on GitHub](https://github.com/paper-leaf-tech/laravel-translation/issues).

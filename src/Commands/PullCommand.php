@@ -4,11 +4,16 @@ namespace PaperleafTech\LaravelTranslation\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use PaperleafTech\LaravelTranslation\Concerns\DiscoversLocales;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
 
 class PullCommand extends Command
 {
-    protected $signature = 'translations:pull {lang=en} {--dry-run : Preview changes without writing files}';
+    use DiscoversLocales;
+
+    protected $signature = 'translations:pull {lang? : Locale to pull (omit to pull all locales found under lang/)}
+        {--dry-run : Preview changes without writing files}';
 
     protected $description = 'Pull updated translations from Google Sheets into the codebase.';
 
@@ -20,65 +25,94 @@ class PullCommand extends Command
     public function handle(): int
     {
         $lang = $this->argument('lang');
-        $langPath = lang_path($lang);
+        $locales = $lang ? [$lang] : $this->discoverLocales();
 
-        try {
-            $this->info("Pulling translations for language: {$lang}");
-
-            // Read data from Google Sheets
-            $this->info('Reading from Google Sheets...');
-            $sheetData = $this->readSheetData();
-
-            if (empty($sheetData)) {
-                $this->warn('No data found in Google Sheet.');
-
-                return self::SUCCESS;
-            }
-
-            $this->info('Found '.count($sheetData).' translation entries.');
-
-            // Parse and organize translations
-            $translations = $this->parseTranslations($sheetData);
-
-            if ($this->option('dry-run')) {
-                $this->info('DRY RUN - No files will be modified');
-                $this->displayPreview($translations);
-
-                return self::SUCCESS;
-            }
-
-            // Write translations to files
-            $this->writeTranslations($langPath, $translations);
-
-            $this->info('✓ Translations pulled successfully!');
-            $this->line('');
-
-            $spreadsheetUrl = $this->sheetsService->getSpreadsheetUrl();
-            $this->info("View your spreadsheet: {$spreadsheetUrl}");
-            $this->line('');
+        if (empty($locales)) {
+            $this->warn('No locales found under '.lang_path().'. Nothing to pull.');
 
             return self::SUCCESS;
-        } catch (\Exception $e) {
-            $this->error('Pull failed: '.$e->getMessage());
+        }
+
+        $failures = [];
+
+        foreach ($locales as $locale) {
+            try {
+                $ok = $this->pullLocale($locale);
+                if (! $ok) {
+                    $failures[] = $locale;
+                }
+            } catch (\Exception $e) {
+                $this->error("[{$locale}] Pull failed: ".$e->getMessage());
+                $failures[] = $locale;
+            }
+        }
+
+        if (! empty($failures)) {
+            $this->error('Failed locales: '.implode(', ', $failures));
 
             return self::FAILURE;
         }
+
+        return self::SUCCESS;
     }
 
-    /**
-     * Read data from Google Sheets
-     */
-    protected function readSheetData(): array
+    protected function pullLocale(string $locale): bool
+    {
+        $this->info('');
+        $this->info("=== {$locale} ===");
+
+        $sheetName = TranslationConventions::sheetNameFor($locale);
+
+        if ($this->sheetsService->getSheetId($sheetName) === null) {
+            $this->warn("Sheet tab '{$sheetName}' not found; skipping.");
+
+            return true;
+        }
+
+        $sheetData = $this->readSheetData($sheetName);
+
+        if (empty($sheetData)) {
+            $this->warn('No data found in sheet tab.');
+
+            return true;
+        }
+
+        $this->info('Found '.count($sheetData).' translation entries.');
+
+        $translations = $this->parseTranslations($sheetData, $locale);
+
+        if (empty($translations)) {
+            $this->warn('No translatable rows after filtering. Nothing to write.');
+
+            return true;
+        }
+
+        $langPath = lang_path($locale);
+
+        if ($this->option('dry-run')) {
+            $this->info('DRY RUN - No files will be modified');
+            $this->displayPreview($translations);
+
+            return true;
+        }
+
+        $this->writeTranslations($langPath, $translations);
+
+        $this->info("✓ Pulled {$locale}.");
+        $this->info('View tab: '.$this->sheetsService->getSpreadsheetUrl($sheetName));
+
+        return true;
+    }
+
+    protected function readSheetData(string $sheetName): array
     {
         $keyColumn = config('laravel-translation.key_column', 'A');
         $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
         $headerRow = config('laravel-translation.header_row', 1);
 
-        // Read all data from key column to updated value column (A:C)
         $range = "{$keyColumn}{$headerRow}:{$updatedValueColumn}";
-        $data = $this->sheetsService->getSheetData($range);
+        $data = $this->sheetsService->getSheetData($sheetName, $range);
 
-        // Remove header row if it exists
         if ($headerRow && ! empty($data)) {
             array_shift($data);
         }
@@ -87,34 +121,39 @@ class PullCommand extends Command
     }
 
     /**
-     * Parse sheet data into organized translation arrays
+     * Convert sheet rows to a nested translation array.
+     * For source locale, prefer Column C, fall back to Column B.
+     * For non-source locales, only Column C is used; rows with empty C are skipped.
      */
-    protected function parseTranslations(array $sheetData): array
+    protected function parseTranslations(array $sheetData, string $locale): array
     {
+        $isSource = TranslationConventions::isSourceLocale($locale);
         $translations = [];
 
         foreach ($sheetData as $row) {
             if (empty($row[0])) {
-                continue; // Skip empty keys
+                continue;
             }
 
             $key = $row[0];
             $originalValue = $row[1] ?? '';
             $updatedValue = $row[2] ?? '';
 
-            // Prioritize updated value (column C), fall back to original value (column B)
-            $value = ! empty($updatedValue) ? $updatedValue : $originalValue;
+            if ($isSource) {
+                $value = $updatedValue !== '' ? $updatedValue : $originalValue;
+            } else {
+                if ($updatedValue === '') {
+                    continue;
+                }
+                $value = $updatedValue;
+            }
 
-            // Parse dot notation into nested arrays
             $this->setNestedValue($translations, $key, $value);
         }
 
         return $translations;
     }
 
-    /**
-     * Set a value in a nested array using dot notation
-     */
     protected function setNestedValue(array &$array, string $key, mixed $value): void
     {
         $keys = explode('.', $key);
@@ -132,12 +171,8 @@ class PullCommand extends Command
         }
     }
 
-    /**
-     * Write translations to PHP files
-     */
     protected function writeTranslations(string $langPath, array $translations): void
     {
-        // Ensure language directory exists
         if (! File::isDirectory($langPath)) {
             File::makeDirectory($langPath, 0755, true);
             $this->info("Created language directory: {$langPath}");
@@ -146,23 +181,24 @@ class PullCommand extends Command
         foreach ($translations as $filename => $content) {
             $filePath = "{$langPath}/{$filename}.php";
 
-            // Create subdirectories if needed
             $directory = dirname($filePath);
             if (! File::isDirectory($directory)) {
                 File::makeDirectory($directory, 0755, true);
             }
 
-            // Generate PHP array content
+            if (! is_array($content)) {
+                // Top-level scalar key (no file grouping). Write to a __misc.php bucket.
+                $content = [$filename => $content];
+                $filePath = "{$langPath}/__misc.php";
+            }
+
             $phpContent = $this->generatePhpArray($content);
 
             File::put($filePath, $phpContent);
-            $this->line("  ✓ Written: {$filename}.php");
+            $this->line('  ✓ Written: '.basename($filePath));
         }
     }
 
-    /**
-     * Generate PHP array file content
-     */
     protected function generatePhpArray(array $data, int $indent = 0): string
     {
         if ($indent === 0) {
@@ -194,9 +230,6 @@ class PullCommand extends Command
         return $output;
     }
 
-    /**
-     * Display a preview of what would be pulled
-     */
     protected function displayPreview(array $translations): void
     {
         $this->line('');
@@ -205,7 +238,7 @@ class PullCommand extends Command
 
         foreach ($translations as $filename => $content) {
             $this->line("  📄 {$filename}.php");
-            $count = $this->countTranslations($content);
+            $count = is_array($content) ? $this->countTranslations($content) : 1;
             $this->line("     {$count} translation(s)");
         }
 
@@ -213,9 +246,6 @@ class PullCommand extends Command
         $this->info('Run without --dry-run to apply these changes.');
     }
 
-    /**
-     * Count total number of translations in a nested array
-     */
     protected function countTranslations(array $data): int
     {
         $count = 0;

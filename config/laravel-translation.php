@@ -10,10 +10,10 @@ return [
     | You can download this from Google Cloud Console after creating
     | a service account with Google Sheets API access.
     |
-    | Default: storage_path('app/laravel-translations-account.json')
+    | Default: storage_path('app/laravel-translation-credentials.json')
     |
     */
-    'credentials_path' => env('GOOGLE_SHEETS_CREDENTIALS_PATH', storage_path('app/laravel-translations-account.json')),
+    'credentials_path' => env('TRANSLATION_CREDENTIALS_PATH', storage_path('app/laravel-translation-credentials.json')),
 
     /*
     |--------------------------------------------------------------------------
@@ -24,18 +24,7 @@ return [
     | https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit
     |
     */
-    'spreadsheet_id' => env('GOOGLE_SHEETS_SPREADSHEET_ID'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Sheet Name
-    |--------------------------------------------------------------------------
-    |
-    | The name of the sheet tab within your spreadsheet.
-    | Leave null to use the first sheet.
-    |
-    */
-    'sheet_name' => env('GOOGLE_SHEETS_SHEET_NAME', null),
+    'spreadsheet_id' => env('TRANSLATION_SPREADSHEET_ID'),
 
     /*
     |--------------------------------------------------------------------------
@@ -67,7 +56,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | The column letter or index for the original translation values.
-    | This column preserves the original content for reference.
+    | For the source locale this preserves the original baseline.
+    | For non-source locales this contains the source-locale (English) string.
     | Default: 'B' (second column)
     |
     */
@@ -102,14 +92,21 @@ return [
     | Backup Settings
     |--------------------------------------------------------------------------
     |
-    | Configure backup behavior when pushing translations.
+    | Local JSON snapshots of the spreadsheet rows are written before each push.
+    | Set TRANSLATION_BACKUP_PATH to false or null in your .env to disable backups
+    | entirely.
     |
     */
     'backup' => [
-        // Number of backups to keep (older backups will be automatically deleted)
-        'keep' => env('GOOGLE_SHEETS_BACKUP_KEEP', 5),
+        // Storage path for local JSON backups.
+        // Relative paths resolve via storage_path(). Absolute paths are used verbatim.
+        // Set to false or null to disable backups entirely.
+        'path' => env('TRANSLATION_BACKUP_PATH', 'app/translation-backups'),
 
-        // Automatically prune old backups after creating a new one
-        'auto_prune' => env('GOOGLE_SHEETS_BACKUP_AUTO_PRUNE', true),
+        // Number of backups to keep per locale (older backups will be automatically deleted).
+        'keep' => env('TRANSLATION_BACKUP_KEEP', 5),
+
+        // Automatically prune old backups after creating a new one.
+        'auto_prune' => env('TRANSLATION_BACKUP_AUTO_PRUNE', true),
     ],
 ];

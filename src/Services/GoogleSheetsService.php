@@ -4,6 +4,7 @@ namespace PaperleafTech\LaravelTranslation\Services;
 
 use Google\Client;
 use Google\Service\Sheets;
+use Google\Service\Sheets\Spreadsheet;
 use Google\Service\Sheets\ValueRange;
 use Illuminate\Support\Facades\File;
 
@@ -15,7 +16,7 @@ class GoogleSheetsService
 
     protected ?string $spreadsheetId = null;
 
-    protected ?string $sheetName = null;
+    protected ?Spreadsheet $spreadsheetCache = null;
 
     protected bool $initialized = false;
 
@@ -31,7 +32,6 @@ class GoogleSheetsService
         $this->validateConfiguration();
         $this->initializeClient();
         $this->spreadsheetId = config('laravel-translation.spreadsheet_id');
-        $this->sheetName = config('laravel-translation.sheet_name');
         $this->initialized = true;
     }
 
@@ -45,7 +45,7 @@ class GoogleSheetsService
         if (empty($credentialsPath)) {
             throw new \RuntimeException(
                 'Google Sheets credentials path is not configured. '.
-                'Please set GOOGLE_SHEETS_CREDENTIALS_PATH in your .env file.'
+                'Please set TRANSLATION_CREDENTIALS_PATH in your .env file.'
             );
         }
 
@@ -59,7 +59,7 @@ class GoogleSheetsService
         if (empty(config('laravel-translation.spreadsheet_id'))) {
             throw new \RuntimeException(
                 'Google Sheets spreadsheet ID is not configured. '.
-                'Please set GOOGLE_SHEETS_SPREADSHEET_ID in your .env file.'
+                'Please set TRANSLATION_SPREADSHEET_ID in your .env file.'
             );
         }
 
@@ -115,24 +115,31 @@ class GoogleSheetsService
     }
 
     /**
-     * Read data from a specific range in the Google Sheet
+     * Wrap a sheet name + range into A1 notation.
+     * Sheet name is single-quoted; embedded single quotes are doubled.
+     */
+    public static function qualifyRange(string $sheetName, string $range): string
+    {
+        $escaped = str_replace("'", "''", $sheetName);
+
+        return "'{$escaped}'!{$range}";
+    }
+
+    /**
+     * Read data from a specific range in a sheet tab.
      *
-     * @param  string  $range  A1 notation range (e.g., 'A1:B100' or 'Sheet1!A1:B100')
+     * @param  string  $sheetName  Name of the sheet tab
+     * @param  string  $range  A1 notation range without sheet prefix (e.g., 'A1:C100')
      * @return array The values from the sheet
      */
-    public function getSheetData(string $range): array
+    public function getSheetData(string $sheetName, string $range): array
     {
         $this->ensureInitialized();
 
         try {
-            // If sheet name is configured and range doesn't include sheet name, prepend it
-            if ($this->sheetName && ! str_contains($range, '!')) {
-                $range = "{$this->sheetName}!{$range}";
-            }
-
             $response = $this->service->spreadsheets_values->get(
                 $this->spreadsheetId,
-                $range
+                self::qualifyRange($sheetName, $range)
             );
 
             return $response->getValues() ?? [];
@@ -142,22 +149,17 @@ class GoogleSheetsService
     }
 
     /**
-     * Write data to a specific range in the Google Sheet
+     * Write data to a specific range in a sheet tab.
      *
-     * @param  string  $range  A1 notation range (e.g., 'A1:B100' or 'Sheet1!A1:B100')
+     * @param  string  $sheetName  Name of the sheet tab
+     * @param  string  $range  A1 notation range without sheet prefix
      * @param  array  $values  2D array of values to write
-     * @return bool Success status
      */
-    public function updateSheetData(string $range, array $values): bool
+    public function updateSheetData(string $sheetName, string $range, array $values): bool
     {
         $this->ensureInitialized();
 
         try {
-            // If sheet name is configured and range doesn't include sheet name, prepend it
-            if ($this->sheetName && ! str_contains($range, '!')) {
-                $range = "{$this->sheetName}!{$range}";
-            }
-
             $body = new ValueRange([
                 'values' => $values,
             ]);
@@ -168,7 +170,7 @@ class GoogleSheetsService
 
             $this->service->spreadsheets_values->update(
                 $this->spreadsheetId,
-                $range,
+                self::qualifyRange($sheetName, $range),
                 $body,
                 $params
             );
@@ -180,63 +182,17 @@ class GoogleSheetsService
     }
 
     /**
-     * Clear data from a specific range in the Google Sheet
-     *
-     * @param  string  $range  A1 notation range
-     * @return bool Success status
+     * Clear data from a specific range in a sheet tab.
      */
-    public function clearSheetData(string $range): bool
+    public function clearSheetData(string $sheetName, string $range): bool
     {
         $this->ensureInitialized();
 
         try {
-            // If sheet name is configured and range doesn't include sheet name, prepend it
-            if ($this->sheetName && ! str_contains($range, '!')) {
-                $range = "{$this->sheetName}!{$range}";
-            }
-
             $this->service->spreadsheets_values->clear(
                 $this->spreadsheetId,
-                $range,
+                self::qualifyRange($sheetName, $range),
                 new \Google\Service\Sheets\ClearValuesRequest()
-            );
-
-            return true;
-        } catch (\Google\Service\Exception $e) {
-            $this->handleGoogleException($e);
-        }
-    }
-
-    /**
-     * Append data to the end of a sheet
-     *
-     * @param  string  $range  A1 notation range (typically just the columns, e.g., 'A:B')
-     * @param  array  $values  2D array of values to append
-     * @return bool Success status
-     */
-    public function appendSheetData(string $range, array $values): bool
-    {
-        $this->ensureInitialized();
-
-        try {
-            // If sheet name is configured and range doesn't include sheet name, prepend it
-            if ($this->sheetName && ! str_contains($range, '!')) {
-                $range = "{$this->sheetName}!{$range}";
-            }
-
-            $body = new ValueRange([
-                'values' => $values,
-            ]);
-
-            $params = [
-                'valueInputOption' => 'RAW',
-            ];
-
-            $this->service->spreadsheets_values->append(
-                $this->spreadsheetId,
-                $range,
-                $body,
-                $params
             );
 
             return true;
@@ -253,7 +209,6 @@ class GoogleSheetsService
         $errors = $e->getErrors();
         $message = $e->getMessage();
 
-        // Check for common error scenarios
         if ($e->getCode() === 403) {
             throw new \RuntimeException(
                 "Permission denied accessing Google Sheet.\n".
@@ -280,7 +235,6 @@ class GoogleSheetsService
             );
         }
 
-        // Generic error
         throw new \RuntimeException(
             "Google Sheets API error: {$message}\n".
             'Error details: '.json_encode($errors, JSON_PRETTY_PRINT)
@@ -304,33 +258,33 @@ class GoogleSheetsService
     }
 
     /**
-     * Get the full URL to the spreadsheet
+     * Get the URL to the spreadsheet. When $sheetName is provided, the URL
+     * deep-links to that locale's tab via #gid=.
      */
-    public function getSpreadsheetUrl(): string
+    public function getSpreadsheetUrl(?string $sheetName = null): string
     {
         $this->ensureInitialized();
 
-        return "https://docs.google.com/spreadsheets/d/{$this->spreadsheetId}/edit";
+        $url = "https://docs.google.com/spreadsheets/d/{$this->spreadsheetId}/edit";
+
+        if ($sheetName === null) {
+            return $url;
+        }
+
+        $gid = $this->getSheetId($sheetName);
+
+        return $gid === null ? $url : $url."#gid={$gid}";
     }
 
     /**
-     * Get the sheet ID (integer) for a given sheet name
+     * Resolve the sheet ID (gid) for a sheet tab by name. Returns null if missing.
      */
-    public function getSheetId(?string $sheetName = null): ?int
+    public function getSheetId(string $sheetName): ?int
     {
         $this->ensureInitialized();
 
-        $sheetName = $sheetName ?? $this->sheetName;
-
-        $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId);
-
-        foreach ($spreadsheet->getSheets() as $sheet) {
+        foreach ($this->spreadsheet()->getSheets() as $sheet) {
             $properties = $sheet->getProperties();
-            if ($sheetName === null) {
-                // If no sheet name configured, return the first sheet's ID
-                return $properties->getSheetId();
-            }
-
             if ($properties->getTitle() === $sheetName) {
                 return $properties->getSheetId();
             }
@@ -340,107 +294,54 @@ class GoogleSheetsService
     }
 
     /**
-     * Create a backup of the current sheet
+     * Create a sheet tab if it doesn't already exist. Returns true if it was created,
+     * false if it already existed.
      */
-    public function createBackup(): string
+    public function createSheetIfMissing(string $sheetName): bool
     {
         $this->ensureInitialized();
 
-        $sheetId = $this->getSheetId();
-
-        if ($sheetId === null) {
-            throw new \RuntimeException(
-                "Could not find sheet to backup. ".
-                "Please verify your sheet configuration."
-            );
+        if ($this->getSheetId($sheetName) !== null) {
+            return false;
         }
-
-        $timestamp = date('Y-m-d H:i:s');
-        $backupName = "Backup {$timestamp}";
 
         try {
             $request = new \Google\Service\Sheets\Request([
-                'duplicateSheet' => [
-                    'sourceSheetId' => $sheetId,
-                    'insertSheetIndex' => 1000, // Insert at the end
-                    'newSheetName' => $backupName,
+                'addSheet' => [
+                    'properties' => [
+                        'title' => $sheetName,
+                    ],
                 ],
             ]);
 
-            $batchRequest = new \Google\Service\Sheets\BatchUpdateSpreadsheetRequest([
+            $batch = new \Google\Service\Sheets\BatchUpdateSpreadsheetRequest([
                 'requests' => [$request],
             ]);
 
-            $this->service->spreadsheets->batchUpdate($this->spreadsheetId, $batchRequest);
+            $this->service->spreadsheets->batchUpdate($this->spreadsheetId, $batch);
 
-            return $backupName;
+            $this->refreshSpreadsheetCache();
+
+            return true;
         } catch (\Google\Service\Exception $e) {
-            throw new \RuntimeException(
-                "Failed to create backup sheet: ".$e->getMessage()
-            );
+            $this->handleGoogleException($e);
         }
     }
 
     /**
-     * Prune old backups, keeping only the specified number of recent ones
+     * Invalidate the cached spreadsheet metadata so the next lookup re-fetches.
      */
-    public function pruneBackups(int $keep = 5): int
+    public function refreshSpreadsheetCache(): void
     {
-        $this->ensureInitialized();
+        $this->spreadsheetCache = null;
+    }
 
-        if ($keep < 0) {
-            throw new \InvalidArgumentException('Keep count must be a positive integer');
+    protected function spreadsheet(): Spreadsheet
+    {
+        if ($this->spreadsheetCache === null) {
+            $this->spreadsheetCache = $this->service->spreadsheets->get($this->spreadsheetId);
         }
 
-        try {
-            $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId);
-            $sheets = $spreadsheet->getSheets();
-
-            $backups = [];
-            foreach ($sheets as $sheet) {
-                $title = $sheet->getProperties()->getTitle();
-                if (str_starts_with($title, 'Backup ')) {
-                    $backups[] = [
-                        'id' => $sheet->getProperties()->getSheetId(),
-                        'title' => $title,
-                        // Parse timestamp for sorting (Backup YYYY-MM-DD HH:mm:ss)
-                        'time' => strtotime(substr($title, 7)),
-                    ];
-                }
-            }
-
-            // Sort by time descending (newest first)
-            usort($backups, fn ($a, $b) => $b['time'] <=> $a['time']);
-
-            // Slice to find ones to delete
-            $toDelete = array_slice($backups, $keep);
-
-            if (empty($toDelete)) {
-                return 0;
-            }
-
-            // Create delete requests
-            $requests = [];
-            foreach ($toDelete as $backup) {
-                $requests[] = [
-                    'deleteSheet' => [
-                        'sheetId' => $backup['id'],
-                    ],
-                ];
-            }
-
-            // Execute batch update
-            $batchRequest = new \Google\Service\Sheets\BatchUpdateSpreadsheetRequest([
-                'requests' => $requests,
-            ]);
-
-            $this->service->spreadsheets->batchUpdate($this->spreadsheetId, $batchRequest);
-
-            return count($toDelete);
-        } catch (\Google\Service\Exception $e) {
-            throw new \RuntimeException(
-                "Failed to prune backup sheets: ".$e->getMessage()
-            );
-        }
+        return $this->spreadsheetCache;
     }
 }

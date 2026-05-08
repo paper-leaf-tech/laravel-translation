@@ -2,9 +2,11 @@
 
 namespace PaperleafTech\LaravelTranslation;
 
-use PaperleafTech\LaravelTranslation\Commands\PushCommand;
 use PaperleafTech\LaravelTranslation\Commands\PullCommand;
+use PaperleafTech\LaravelTranslation\Commands\PushCommand;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+use PaperleafTech\LaravelTranslation\Services\TranslationBackupManager;
+use PaperleafTech\LaravelTranslation\Services\TranslationReconciler;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -29,9 +31,8 @@ class LaravelTranslationServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
-        // Register GoogleSheetsService as a singleton
-        $this->app->singleton(GoogleSheetsService::class, function ($app) {
-            return new GoogleSheetsService();
-        });
+        $this->app->singleton(GoogleSheetsService::class, fn () => new GoogleSheetsService());
+        $this->app->singleton(TranslationBackupManager::class, fn () => new TranslationBackupManager());
+        $this->app->singleton(TranslationReconciler::class, fn () => new TranslationReconciler());
     }
 }
