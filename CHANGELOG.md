@@ -4,6 +4,26 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-08
+
+### Breaking Changes
+- `translations:pull` no longer regenerates translation files. It now updates existing keys in place using AST manipulation, preserving comments, blank lines, indentation, and quote styles.
+- Pull will not create files or directories. Running pull against a locale that has no `lang/{locale}/` directory yields a "skipped" warning instead of generated files. To bootstrap a new locale, create starter files manually first.
+- Keys present in the sheet but missing from the local file are skipped with a per-key warning instead of being added. Add the key to the appropriate file in code, then re-pull to populate its value.
+- Removed the `__misc.php` fallback for keys without a dot — those keys are now skipped with a warning.
+
+### Added
+- Surgical pull: comments, blank lines, indentation, and original quote styles in `lang/*.php` files are preserved across pulls.
+- New service `TranslationFileWriter` (AST-based via `nikic/php-parser`).
+- Per-file pull stats: keys updated, keys skipped (new), keys skipped (non-string values).
+
+### Changed
+- `nikic/php-parser ^5.0` is now a runtime dependency.
+
+### Removed
+- `PullCommand::generatePhpArray()` and the file-regeneration code path.
+- `PullCommand::writeTranslations()` (replaced by `applyUpdates()` delegating to `TranslationFileWriter`).
+
 ## [0.2.0] - 2026-05-08
 
 ### Breaking Changes
@@ -59,7 +79,8 @@ All notable changes to `laravel-translation` will be documented in this file.
 - Keep original cell values
 - Added sheet backups
 
-[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.0.14...v0.1.0
 [0.0.14]: https://github.com/paper-leaf-tech/laravel-translation/releases/tag/v0.0.14

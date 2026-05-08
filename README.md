@@ -2,9 +2,15 @@
 
 Manage Laravel translation strings using Google Sheets. This package syncs your Laravel translation files with a Google Spreadsheet, making it easy for non-technical team members to manage translations.
 
-## Upgrading from 0.1.x
+## Upgrading
 
-0.2.0 contains breaking changes. See [`CHANGELOG.md`](CHANGELOG.md) for full details. Highlights:
+### From 0.2.x to 0.3.0
+
+- `translations:pull` now updates existing translation files in place rather than regenerating them. Comments, blank lines, indentation, and quote styles are preserved.
+- Pull will **not** create files or directories. New keys in the sheet are surfaced as warnings; add them to the appropriate file in code first, then re-pull to populate their values. To bootstrap a new locale, create starter files in `lang/{locale}/` before pulling.
+- `nikic/php-parser ^5.0` is now a runtime dependency.
+
+### From 0.1.x to 0.2.x
 
 - All env vars renamed: `GOOGLE_SHEETS_*` → `TRANSLATION_*`.
 - `GOOGLE_SHEETS_SHEET_NAME` removed; each locale now uses a sheet tab named `Translations - {locale}` (auto-created).
@@ -15,6 +21,7 @@ Manage Laravel translation strings using Google Sheets. This package syncs your 
 ## Features
 
 - 🔄 **Bi-directional sync** — Push Laravel translations to Google Sheets and pull updates back
+- ✏️ **Surgical pull** — Updates land in place via AST manipulation; comments, blank lines, indentation, and quote styles are preserved
 - 🌍 **Multi-language by default** — Run `translations:push` with no argument to sync every locale under `lang/`
 - 🔤 **Translator-friendly sheets** — Non-English sheets show the English source alongside each translation
 - 🔐 **Service Account authentication** — Simple, secure auth using Google service accounts
@@ -145,6 +152,20 @@ php artisan translations:pull --dry-run
 
 Pull discovery scans `lang/` directories. Locales without a matching `Translations - {locale}` sheet tab are skipped with a warning — only locales whose tab exists in the spreadsheet get pulled.
 
+#### Surgical updates
+
+Pull modifies your translation files in place using PHP AST manipulation. This means:
+
+- **Preserved**: comments (line, block, doc), blank lines, indentation style, original quote styles (single, double, heredoc, nowdoc).
+- **Touched**: only the string values for keys that already exist in your file.
+
+Pull will **not**:
+
+- Create new files. If the sheet has `messages.greeting` and there's no `lang/{locale}/messages.php`, the row is skipped with a warning telling you to add the file in code first.
+- Append new keys. If the sheet has `auth.captcha.invalid` and your `lang/{locale}/auth.php` doesn't have a `captcha.invalid` entry, the row is skipped with a warning. Add the key to the file in your editor (with whatever default value you want), then re-pull to populate it.
+- Touch keys whose current value isn't a simple string literal (e.g., function calls, concatenation, integers). Those are skipped with a warning.
+- Remove keys. Anything in your file that isn't on the sheet is left alone.
+
 ## Backups
 
 Before each push, the existing rows on the locale's sheet are snapshotted as a JSON file:
@@ -167,6 +188,26 @@ storage/app/translation-backups/
 2. **Translators work in the sheet** — non-source tabs show English in Column B and let translators fill Column C.
 3. **Pull** — `php artisan translations:pull` writes Column C back to the matching `lang/{locale}/*.php` files. Untranslated rows are left alone.
 4. **Re-push** when you add new keys to your code. Column C is preserved for keys whose English hasn't changed; if English changes, the row is flagged "review needed" in the command output but the existing translation is kept.
+
+### Adding a new key (translator-driven)
+
+If a translator notices a missing key and adds it to the sheet, pull will skip it with a warning until the developer adds it to code:
+
+```
+⚠ Skipped 1 new key(s) in lang/en/auth.php (add to code first, then re-pull):
+    - auth.captcha.invalid
+```
+
+Workflow: developer adds `'captcha' => ['invalid' => '']` (or any default) to `lang/en/auth.php`, re-runs `translations:pull`, and the value from the sheet lands in place.
+
+### Bootstrapping a new locale
+
+Pull will not create the locale directory. To add a new locale:
+
+1. `mkdir lang/fr` and add starter files (e.g., `lang/fr/auth.php` returning `[]` or a copy of the English file).
+2. `php artisan translations:push fr` — creates the `Translations - fr` tab populated with English in Column B.
+3. Translator fills Column C in the sheet.
+4. `php artisan translations:pull fr` — surgically applies translations to your starter files.
 
 ## Troubleshooting
 

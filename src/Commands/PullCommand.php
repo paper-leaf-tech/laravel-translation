@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Concerns\DiscoversLocales;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+use PaperleafTech\LaravelTranslation\Services\TranslationFileWriter;
 use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
 
 class PullCommand extends Command
@@ -15,10 +16,12 @@ class PullCommand extends Command
     protected $signature = 'translations:pull {lang? : Locale to pull (omit to pull all locales found under lang/)}
         {--dry-run : Preview changes without writing files}';
 
-    protected $description = 'Pull updated translations from Google Sheets into the codebase.';
+    protected $description = 'Pull updated translations from Google Sheets and apply them in-place to existing language files.';
 
-    public function __construct(protected GoogleSheetsService $sheetsService)
-    {
+    public function __construct(
+        protected GoogleSheetsService $sheetsService,
+        protected TranslationFileWriter $writer,
+    ) {
         parent::__construct();
     }
 
@@ -69,6 +72,13 @@ class PullCommand extends Command
             return true;
         }
 
+        $langPath = lang_path($locale);
+        if (! File::isDirectory($langPath)) {
+            $this->warn("Language directory {$langPath} not found. Bootstrap the locale by adding starter files first, then re-pull.");
+
+            return true;
+        }
+
         $sheetData = $this->readSheetData($sheetName);
 
         if (empty($sheetData)) {
@@ -79,24 +89,22 @@ class PullCommand extends Command
 
         $this->info('Found '.count($sheetData).' translation entries.');
 
-        $translations = $this->parseTranslations($sheetData, $locale);
+        $updates = $this->parseUpdates($sheetData, $locale);
 
-        if (empty($translations)) {
+        if (empty($updates)) {
             $this->warn('No translatable rows after filtering. Nothing to write.');
 
             return true;
         }
 
-        $langPath = lang_path($locale);
-
         if ($this->option('dry-run')) {
             $this->info('DRY RUN - No files will be modified');
-            $this->displayPreview($translations);
+            $this->displayPreview($updates);
 
             return true;
         }
 
-        $this->writeTranslations($langPath, $translations);
+        $this->applyUpdates($langPath, $updates);
 
         $this->info("✓ Pulled {$locale}.");
         $this->info('View tab: '.$this->sheetsService->getSpreadsheetUrl($sheetName));
@@ -121,14 +129,16 @@ class PullCommand extends Command
     }
 
     /**
-     * Convert sheet rows to a nested translation array.
-     * For source locale, prefer Column C, fall back to Column B.
-     * For non-source locales, only Column C is used; rows with empty C are skipped.
+     * Convert sheet rows to a flat key=>value map of updates.
+     * Source locale: prefer Column C, fall back to Column B.
+     * Non-source: only Column C; rows with empty C are skipped.
+     *
+     * @return array<string,string> Full dotted keys (e.g. 'auth.failed')
      */
-    protected function parseTranslations(array $sheetData, string $locale): array
+    protected function parseUpdates(array $sheetData, string $locale): array
     {
         $isSource = TranslationConventions::isSourceLocale($locale);
-        $translations = [];
+        $updates = [];
 
         foreach ($sheetData as $row) {
             if (empty($row[0])) {
@@ -148,116 +158,94 @@ class PullCommand extends Command
                 $value = $updatedValue;
             }
 
-            $this->setNestedValue($translations, $key, $value);
+            $updates[$key] = $value;
         }
 
-        return $translations;
+        return $updates;
     }
 
-    protected function setNestedValue(array &$array, string $key, mixed $value): void
+    /**
+     * Group full keys by their first dotted segment (the file name) and
+     * delegate per-file updates to the file writer. Reports stats afterward.
+     *
+     * @param  array<string,string>  $updates
+     */
+    protected function applyUpdates(string $langPath, array $updates): void
     {
-        $keys = explode('.', $key);
-        $current = &$array;
+        $byFile = [];
+        foreach ($updates as $fullKey => $value) {
+            if (! str_contains($fullKey, '.')) {
+                $this->warn("Skipped '{$fullKey}': key has no file segment (must be of the form '<file>.<key>').");
+                continue;
+            }
+            [$file, $relative] = explode('.', $fullKey, 2);
+            $byFile[$file][$relative] = $value;
+        }
 
-        foreach ($keys as $i => $k) {
-            if ($i === count($keys) - 1) {
-                $current[$k] = $value;
-            } else {
-                if (! isset($current[$k]) || ! is_array($current[$k])) {
-                    $current[$k] = [];
+        foreach ($byFile as $file => $fileUpdates) {
+            $filePath = "{$langPath}/{$file}.php";
+            $stats = $this->writer->updateFile($filePath, $fileUpdates);
+
+            $relPath = $this->relativePath($filePath);
+
+            if (! empty($stats['updated'])) {
+                $this->info('  ✓ Updated '.count($stats['updated'])." key(s) in {$relPath}");
+            }
+
+            $isMissing = ! File::exists($filePath);
+            if ($isMissing && ! empty($stats['skipped_missing'])) {
+                $this->warn("  ⚠ {$relPath} not found; ".count($stats['skipped_missing']).' key(s) skipped (add the file with starter keys, then re-pull).');
+            } elseif (! empty($stats['skipped_missing'])) {
+                $count = count($stats['skipped_missing']);
+                $this->warn("  ⚠ Skipped {$count} new key(s) in {$relPath} (add to code first, then re-pull):");
+                foreach ($stats['skipped_missing'] as $relative) {
+                    $this->line("      - {$file}.{$relative}");
                 }
-                $current = &$current[$k];
+            }
+
+            if (! empty($stats['skipped_non_string'])) {
+                $count = count($stats['skipped_non_string']);
+                $this->warn("  ⚠ Skipped {$count} key(s) in {$relPath} with non-string values:");
+                foreach ($stats['skipped_non_string'] as $relative) {
+                    $this->line("      - {$file}.{$relative}");
+                }
             }
         }
     }
 
-    protected function writeTranslations(string $langPath, array $translations): void
+    protected function relativePath(string $absolutePath): string
     {
-        if (! File::isDirectory($langPath)) {
-            File::makeDirectory($langPath, 0755, true);
-            $this->info("Created language directory: {$langPath}");
+        $base = base_path();
+        if (str_starts_with($absolutePath, $base.DIRECTORY_SEPARATOR)) {
+            return substr($absolutePath, strlen($base) + 1);
         }
 
-        foreach ($translations as $filename => $content) {
-            $filePath = "{$langPath}/{$filename}.php";
-
-            $directory = dirname($filePath);
-            if (! File::isDirectory($directory)) {
-                File::makeDirectory($directory, 0755, true);
-            }
-
-            if (! is_array($content)) {
-                // Top-level scalar key (no file grouping). Write to a __misc.php bucket.
-                $content = [$filename => $content];
-                $filePath = "{$langPath}/__misc.php";
-            }
-
-            $phpContent = $this->generatePhpArray($content);
-
-            File::put($filePath, $phpContent);
-            $this->line('  ✓ Written: '.basename($filePath));
-        }
+        return $absolutePath;
     }
 
-    protected function generatePhpArray(array $data, int $indent = 0): string
+    /**
+     * @param  array<string,string>  $updates
+     */
+    protected function displayPreview(array $updates): void
     {
-        if ($indent === 0) {
-            $output = "<?php\n\nreturn [\n";
-        } else {
-            $output = "[\n";
-        }
-
-        foreach ($data as $key => $value) {
-            $spaces = str_repeat('    ', $indent + 1);
-
-            if (is_array($value)) {
-                $output .= "{$spaces}'{$key}' => ";
-                $output .= $this->generatePhpArray($value, $indent + 1);
-                $output .= ",\n";
-            } else {
-                $escapedValue = addslashes($value);
-                $output .= "{$spaces}'{$key}' => '{$escapedValue}',\n";
+        $byFile = [];
+        foreach ($updates as $fullKey => $_) {
+            if (! str_contains($fullKey, '.')) {
+                continue;
             }
+            [$file] = explode('.', $fullKey, 2);
+            $byFile[$file] = ($byFile[$file] ?? 0) + 1;
         }
 
-        $spaces = str_repeat('    ', $indent);
-        $output .= "{$spaces}]";
-
-        if ($indent === 0) {
-            $output .= ";\n";
-        }
-
-        return $output;
-    }
-
-    protected function displayPreview(array $translations): void
-    {
         $this->line('');
-        $this->line('Preview of files that would be created/updated:');
+        $this->line('Preview of files that would be checked for updates:');
         $this->line('');
 
-        foreach ($translations as $filename => $content) {
-            $this->line("  📄 {$filename}.php");
-            $count = is_array($content) ? $this->countTranslations($content) : 1;
-            $this->line("     {$count} translation(s)");
+        foreach ($byFile as $file => $count) {
+            $this->line("  📄 {$file}.php — {$count} key(s) candidate for update");
         }
 
         $this->line('');
         $this->info('Run without --dry-run to apply these changes.');
-    }
-
-    protected function countTranslations(array $data): int
-    {
-        $count = 0;
-
-        foreach ($data as $value) {
-            if (is_array($value)) {
-                $count += $this->countTranslations($value);
-            } else {
-                $count++;
-            }
-        }
-
-        return $count;
     }
 }
