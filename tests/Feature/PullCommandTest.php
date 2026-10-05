@@ -277,6 +277,7 @@ PHP);
                     ['auth.failed', 'Failed', ''],
                 ];
             }
+
             return [
                 ['Key', 'English (Source)', 'Translation'],
                 ['auth.failed', 'Failed', 'Échec'],
@@ -443,6 +444,44 @@ PHP);
     }
 
     /** @test */
+    public function it_pulls_into_files_in_subdirectories(): void
+    {
+        File::ensureDirectoryExists(lang_path('fr/resources'));
+        File::put(lang_path('fr/resources/schools.php'), <<<'PHP'
+<?php
+
+return [
+    'title' => '',
+    'form' => [
+        'name' => '',
+    ],
+];
+PHP);
+
+        $sheetData = [
+            ['Key', 'English (Source)', 'Translation'],
+            ['resources.schools.title', 'Schools', 'Écoles'],
+            ['resources.schools.form.name', 'Name', 'Nom'],
+        ];
+
+        $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('getSheetId')->andReturn(123);
+        $mock->shouldReceive('getSheetData')->once()->andReturn($sheetData);
+        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
+
+        $this->app->instance(GoogleSheetsService::class, $mock);
+
+        $this->artisan('translations:pull', ['lang' => 'fr'])
+            ->expectsOutputToContain('Updated 2 key(s) in')
+            ->assertSuccessful();
+
+        $translations = require lang_path('fr/resources/schools.php');
+        $this->assertSame('Écoles', $translations['title']);
+        $this->assertSame('Nom', $translations['form']['name']);
+        $this->assertFalse(File::exists(lang_path('fr/resources.php')));
+    }
+
+    /** @test */
     public function it_does_not_touch_file_when_no_keys_match(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'
@@ -489,7 +528,7 @@ PHP);
 
         $sheetData = [
             ['Key', 'Original Value', 'Updated Value'],
-            ["auth.greeting", 'old', "It's a new day"],
+            ['auth.greeting', 'old', "It's a new day"],
         ];
 
         $mock = Mockery::mock(GoogleSheetsService::class);

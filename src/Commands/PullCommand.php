@@ -99,7 +99,7 @@ class PullCommand extends Command
 
         if ($this->option('dry-run')) {
             $this->info('DRY RUN - No files will be modified');
-            $this->displayPreview($updates);
+            $this->displayPreview($langPath, $updates);
 
             return true;
         }
@@ -176,9 +176,10 @@ class PullCommand extends Command
         foreach ($updates as $fullKey => $value) {
             if (! str_contains($fullKey, '.')) {
                 $this->warn("Skipped '{$fullKey}': key has no file segment (must be of the form '<file>.<key>').");
+
                 continue;
             }
-            [$file, $relative] = explode('.', $fullKey, 2);
+            [$file, $relative] = $this->splitKey($langPath, $fullKey);
             $byFile[$file][$relative] = $value;
         }
 
@@ -213,6 +214,31 @@ class PullCommand extends Command
         }
     }
 
+    /**
+     * Split a dotted sheet key into the file it belongs to (relative to the
+     * locale directory, without extension) and the key within that file.
+     * Push flattens subdirectories into the key, so `resources.schools.title`
+     * may live in `resources/schools.php`; the deepest existing file wins.
+     * Falls back to the first segment when no file matches, so a missing
+     * file is still reported.
+     *
+     * @return array{0:string,1:string}
+     */
+    protected function splitKey(string $langPath, string $fullKey): array
+    {
+        $segments = explode('.', $fullKey);
+
+        for ($depth = count($segments) - 1; $depth > 1; $depth--) {
+            $file = implode('/', array_slice($segments, 0, $depth));
+
+            if (File::exists("{$langPath}/{$file}.php")) {
+                return [$file, implode('.', array_slice($segments, $depth))];
+            }
+        }
+
+        return explode('.', $fullKey, 2);
+    }
+
     protected function relativePath(string $absolutePath): string
     {
         $base = base_path();
@@ -226,14 +252,14 @@ class PullCommand extends Command
     /**
      * @param  array<string,string>  $updates
      */
-    protected function displayPreview(array $updates): void
+    protected function displayPreview(string $langPath, array $updates): void
     {
         $byFile = [];
         foreach ($updates as $fullKey => $_) {
             if (! str_contains($fullKey, '.')) {
                 continue;
             }
-            [$file] = explode('.', $fullKey, 2);
+            [$file] = $this->splitKey($langPath, $fullKey);
             $byFile[$file] = ($byFile[$file] ?? 0) + 1;
         }
 

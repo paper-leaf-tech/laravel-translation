@@ -4,6 +4,9 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `translations:pull` now writes into translation files in subdirectories. Push flattens `lang/{locale}/resources/schools.php` into keys like `resources.schools.title`; pull previously looked for `resources.php` and skipped every row. Pull now picks the deepest existing file that matches the key.
+
 ## [0.3.0] - 2026-05-08
 
 ### Breaking Changes
