@@ -4,6 +4,8 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
+
 ### Added
 - `translations:check` compares each locale with the source locale and fails on missing keys, extra keys or mismatched `:placeholders`. It covers PHP files (including subdirectories), JSON lines and published package overrides. Pass `--allow-missing` to fail only on placeholders.
 
@@ -92,7 +94,8 @@ All notable changes to `laravel-translation` will be documented in this file.
 - Keep original cell values
 - Added sheet backups
 
-[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.1.0...v0.2.0
