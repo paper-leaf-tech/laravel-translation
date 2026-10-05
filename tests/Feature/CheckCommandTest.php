@@ -194,4 +194,35 @@ class CheckCommandTest extends TestCase
 
         $this->artisan('translations:check')->assertSuccessful();
     }
+
+    #[Test]
+    public function it_compares_against_the_configured_source_locale(): void
+    {
+        config()->set('laravel-translation.source_locale', 'en_CA');
+
+        $this->writeLangFiles([
+            'en_CA/common.php' => ['save' => 'Save', 'cancel' => 'Cancel'],
+            'fr_CA/common.php' => ['save' => 'Enregistrer'],
+        ]);
+
+        $this->artisan('translations:check')
+            ->expectsOutputToContain('Missing from fr_CA')
+            ->doesntExpectOutputToContain('=== en_CA ===')
+            ->assertFailed();
+    }
+
+    #[Test]
+    public function it_checks_json_lines_without_a_source_json_file(): void
+    {
+        $this->writeLangFiles([
+            'en/common.php' => ['save' => 'Save'],
+            'fr/common.php' => ['save' => 'Enregistrer'],
+            'fr.json' => ['Hello, :name!' => 'Bonjour !'],
+        ]);
+
+        $this->artisan('translations:check')
+            ->expectsOutputToContain('Placeholders differ: en has [name], fr has []')
+            ->doesntExpectOutputToContain('Not in en')
+            ->assertFailed();
+    }
 }

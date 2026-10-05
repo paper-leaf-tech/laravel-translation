@@ -23,9 +23,14 @@ final class TranslationConventions
         return self::SHEET_NAME_PREFIX.$locale;
     }
 
+    public static function sourceLocale(): string
+    {
+        return (string) config('laravel-translation.source_locale', self::SOURCE_LOCALE);
+    }
+
     public static function isSourceLocale(string $locale): bool
     {
-        return $locale === self::SOURCE_LOCALE;
+        return $locale === self::sourceLocale();
     }
 
     /**

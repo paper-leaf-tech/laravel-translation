@@ -34,4 +34,14 @@ class TranslationConventionsTest extends TestCase
     {
         $this->assertSame(['Key', 'English (Source)', 'Translation'], TranslationConventions::headersFor('fr'));
     }
+
+    #[Test]
+    public function it_reads_the_source_locale_from_config(): void
+    {
+        config()->set('laravel-translation.source_locale', 'en_CA');
+
+        $this->assertSame('en_CA', TranslationConventions::sourceLocale());
+        $this->assertTrue(TranslationConventions::isSourceLocale('en_CA'));
+        $this->assertFalse(TranslationConventions::isSourceLocale('en'));
+    }
 }
