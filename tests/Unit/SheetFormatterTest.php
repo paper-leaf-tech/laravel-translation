@@ -77,6 +77,47 @@ class SheetFormatterTest extends TestCase
     }
 
     #[Test]
+    public function it_widens_a_narrow_filter_and_keeps_its_sorting_and_criteria(): void
+    {
+        $sortSpecs = [['dimensionIndex' => 1, 'sortOrder' => 'ASCENDING']];
+        $filterSpecs = [['columnIndex' => 3, 'filterCriteria' => ['hiddenValues' => ['x']]]];
+
+        $filters = $this->ofType($this->requests($this->sheet(['basicFilter' => [
+            'range' => ['sheetId' => 7, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => 4],
+            'sortSpecs' => $sortSpecs,
+            'filterSpecs' => $filterSpecs,
+        ]])), 'setBasicFilter');
+
+        $this->assertCount(1, $filters);
+        $this->assertSame(['sheetId' => 7, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => 6], $filters[0]['filter']['range']);
+        $this->assertSame($sortSpecs, $filters[0]['filter']['sortSpecs']);
+        $this->assertSame($filterSpecs, $filters[0]['filter']['filterSpecs']);
+    }
+
+    #[Test]
+    public function it_leaves_a_filter_that_already_covers_every_column(): void
+    {
+        $filter = ['range' => ['sheetId' => 7, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => 6], 'sortSpecs' => [['dimensionIndex' => 0]]];
+
+        $this->assertCount(0, $this->ofType($this->requests($this->sheet(['basicFilter' => $filter])), 'setBasicFilter'));
+    }
+
+    #[Test]
+    public function it_keeps_typed_translations_as_text_in_the_key_through_locale_columns(): void
+    {
+        $text = array_values(array_filter(
+            $this->ofType($this->requests(), 'repeatCell'),
+            fn (array $repeat): bool => isset($repeat['cell']['userEnteredFormat']['numberFormat']),
+        ));
+
+        $this->assertCount(1, $text);
+        $this->assertSame(['sheetId' => 7, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => 5], $text[0]['range']);
+        $this->assertSame(['numberFormat' => ['type' => 'TEXT']], $text[0]['cell']['userEnteredFormat']);
+        $this->assertSame('userEnteredFormat.numberFormat', $text[0]['fields']);
+        $this->assertLessThanOrEqual(array_search('notes', self::HEADERS, true), $text[0]['range']['endColumnIndex']);
+    }
+
+    #[Test]
     public function it_freezes_the_header_and_sizes_only_managed_columns(): void
     {
         $requests = $this->requests();

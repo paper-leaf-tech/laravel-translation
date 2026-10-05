@@ -2,6 +2,7 @@
 
 namespace PaperleafTech\LaravelTranslation\Sheet;
 
+use Google\Model;
 use Google\Service\Sheets\Sheet;
 
 /**
@@ -58,6 +59,11 @@ class SheetFormatter
             $this->format($this->range($sheetId, 1, null, 0, $fromCode), [
                 'backgroundColor' => $this->colour(self::READ_ONLY),
             ], 'userEnteredFormat.backgroundColor'),
+            // Plain text, so a typed "0012" or "1/2" stays as written instead
+            // of becoming a number or a date.
+            $this->format($this->range($sheetId, 1, null, 0, $this->lastLocaleColumn($headers, $localeHeaders, $fromCode)), [
+                'numberFormat' => ['type' => 'TEXT'],
+            ], 'userEnteredFormat.numberFormat'),
         ];
 
         foreach ($headers as $index => $header) {
@@ -106,11 +112,71 @@ class SheetFormatter
             'warningOnly' => true,
         ]]];
 
-        if ($sheet->getBasicFilter() === null) {
-            $requests[] = ['setBasicFilter' => ['filter' => ['range' => $this->range($sheetId, 0, null, 0, $columns)]]];
+        $filter = $this->filter($sheet, $sheetId, $columns);
+
+        if ($filter !== null) {
+            $requests[] = ['setBasicFilter' => ['filter' => $filter]];
         }
 
         return $requests;
+    }
+
+    /**
+     * A filter over every column: a new one when the tab has none, or the
+     * existing one widened, with its sorting and criteria kept, when columns
+     * were added past it. Null when the existing filter already covers them.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function filter(Sheet $sheet, int $sheetId, int $columns): ?array
+    {
+        $range = $this->range($sheetId, 0, null, 0, $columns);
+        $existing = $sheet->getBasicFilter();
+
+        if ($existing === null) {
+            return ['range' => $range];
+        }
+
+        $end = $existing->getRange()?->getEndColumnIndex();
+
+        if ($end === null || $end >= $columns) {
+            return null;
+        }
+
+        return array_filter([
+            'range' => $range,
+            'sortSpecs' => $this->toArrays($existing->getSortSpecs() ?? []),
+            'filterSpecs' => $this->toArrays($existing->getFilterSpecs() ?? []),
+        ], fn (array $value): bool => $value !== []);
+    }
+
+    /**
+     * @param  list<Model>  $models
+     * @return list<array<string, mixed>>
+     */
+    private function toArrays(array $models): array
+    {
+        return array_map(fn (Model $model): array => json_decode(json_encode($model->toSimpleObject()), true), $models);
+    }
+
+    /**
+     * The end (exclusive) of the leading key, group, default and locale
+     * columns, which push writes contiguously at the start of the header.
+     *
+     * @param  list<string>  $headers
+     * @param  list<string>  $localeHeaders
+     */
+    private function lastLocaleColumn(array $headers, array $localeHeaders, int $fromCode): int
+    {
+        $end = $fromCode;
+
+        foreach ($headers as $index => $header) {
+            if (in_array($header, $localeHeaders, true)) {
+                $end = max($end, $index + 1);
+            }
+        }
+
+        return $end;
     }
 
     /**
