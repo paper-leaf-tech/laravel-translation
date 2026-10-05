@@ -2,6 +2,7 @@
 
 namespace PaperleafTech\LaravelTranslation;
 
+use PaperleafTech\LaravelTranslation\Commands\CheckCommand;
 use PaperleafTech\LaravelTranslation\Commands\PullCommand;
 use PaperleafTech\LaravelTranslation\Commands\PushCommand;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
@@ -22,6 +23,7 @@ class LaravelTranslationServiceProvider extends PackageServiceProvider
             ->hasCommands([
                 PushCommand::class,
                 PullCommand::class,
+                CheckCommand::class,
             ])
             ->hasInstallCommand(function (InstallCommand $command) {
                 $command

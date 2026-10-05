@@ -482,6 +482,50 @@ PHP);
     }
 
     /** @test */
+    public function it_skips_rows_whose_placeholders_differ_from_the_source(): void
+    {
+        File::put(lang_path('en/access.php'), <<<'PHP'
+<?php
+
+return [
+    'granted' => 'You are now :role.',
+    'ended' => ':name no longer holds :role.',
+];
+PHP);
+        File::ensureDirectoryExists(lang_path('fr'));
+        File::put(lang_path('fr/access.php'), <<<'PHP'
+<?php
+
+return [
+    'granted' => '',
+    'ended' => '',
+];
+PHP);
+
+        $sheetData = [
+            ['Key', 'English (Source)', 'Translation'],
+            ['access.granted', 'You are now :role.', ':Role vous a été attribué.'],
+            ['access.ended', ':name no longer holds :role.', ':name n’occupe plus ce rôle.'],
+        ];
+
+        $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('getSheetId')->andReturn(123);
+        $mock->shouldReceive('getSheetData')->once()->andReturn($sheetData);
+        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
+
+        $this->app->instance(GoogleSheetsService::class, $mock);
+
+        $this->artisan('translations:pull', ['lang' => 'fr'])
+            ->expectsOutputToContain('Skipped 1 row(s) whose :placeholders differ from en')
+            ->expectsOutputToContain('access.ended: en has [name, role], fr has [name]')
+            ->assertSuccessful();
+
+        $translations = require lang_path('fr/access.php');
+        $this->assertSame(':Role vous a été attribué.', $translations['granted']);
+        $this->assertSame('', $translations['ended']);
+    }
+
+    /** @test */
     public function it_does_not_touch_file_when_no_keys_match(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'

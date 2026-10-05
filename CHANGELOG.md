@@ -4,6 +4,12 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `translations:check` compares each locale with the source locale and fails on missing keys, extra keys or mismatched `:placeholders`. It covers PHP files (including subdirectories), JSON lines and published package overrides. Pass `--allow-missing` to fail only on placeholders.
+
+### Changed
+- `translations:pull` skips rows whose `:placeholders` differ from the source-locale line in code, with a warning listing each one. Previously such a row was written to the file and silently dropped the replacement at runtime.
+
 ## [0.3.1] - 2026-10-05
 
 ### Fixed

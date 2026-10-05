@@ -28,6 +28,7 @@ Manage Laravel translation strings using Google Sheets. This package syncs your 
 - 📝 **Nested translations** — Automatically handles nested translation arrays using dot notation
 - 🗂️ **Local JSON backups** — Sheet snapshots saved to a gitignored folder before every push
 - 🔍 **Dry-run mode** — Preview pull changes before applying them
+- ✅ **Drift check** — `translations:check` fails CI when a locale's keys or `:placeholders` drift from the source
 
 ## Installation
 
@@ -165,6 +166,30 @@ Pull will **not**:
 - Append new keys. If the sheet has `auth.captcha.invalid` and your `lang/{locale}/auth.php` doesn't have a `captcha.invalid` entry, the row is skipped with a warning. Add the key to the file in your editor (with whatever default value you want), then re-pull to populate it.
 - Touch keys whose current value isn't a simple string literal (e.g., function calls, concatenation, integers). Those are skipped with a warning.
 - Remove keys. Anything in your file that isn't on the sheet is left alone.
+- Apply a value whose `:placeholders` differ from the source-locale line in code. A translation that drops or renames `:name` would silently lose that value on the page, so the row is skipped with a warning; fix it in the sheet and re-pull. Placeholders are compared case-insensitively, since Laravel treats `:name`, `:Name` and `:NAME` as the same replacement.
+
+### Check translations for drift
+
+```bash
+# Check every locale against the source locale (en)
+php artisan translations:check
+
+# Check a single locale
+php artisan translations:check fr
+
+# Report missing keys without failing (placeholder mismatches still fail)
+php artisan translations:check --allow-missing
+```
+
+For each locale, the check reports keys missing from it, keys it has that the source lacks, and lines whose `:placeholders` differ from the source. It reads `lang/{locale}/**/*.php` (subdirectories included) and `lang/{locale}.json`. For any package with an override published under `lang/vendor/{package}/{locale}`, it also checks that package's lines, with the override merged over the package's own files the way Laravel loads them.
+
+It exits non-zero on any problem, so it can gate CI:
+
+```yaml
+- php artisan translations:check
+```
+
+The package is usually a dev dependency, so run the check in a CI step that installs dev dependencies.
 
 ## Backups
 

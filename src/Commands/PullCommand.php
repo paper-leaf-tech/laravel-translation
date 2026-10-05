@@ -6,7 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Concerns\DiscoversLocales;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+use PaperleafTech\LaravelTranslation\Services\TranslationCatalogue;
 use PaperleafTech\LaravelTranslation\Services\TranslationFileWriter;
+use PaperleafTech\LaravelTranslation\Support\Placeholders;
 use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
 
 class PullCommand extends Command
@@ -21,6 +23,7 @@ class PullCommand extends Command
     public function __construct(
         protected GoogleSheetsService $sheetsService,
         protected TranslationFileWriter $writer,
+        protected TranslationCatalogue $catalogue,
     ) {
         parent::__construct();
     }
@@ -89,7 +92,7 @@ class PullCommand extends Command
 
         $this->info('Found '.count($sheetData).' translation entries.');
 
-        $updates = $this->parseUpdates($sheetData, $locale);
+        $updates = $this->rejectPlaceholderMismatches($this->parseUpdates($sheetData, $locale), $locale);
 
         if (empty($updates)) {
             $this->warn('No translatable rows after filtering. Nothing to write.');
@@ -165,7 +168,70 @@ class PullCommand extends Command
     }
 
     /**
-     * Group full keys by their first dotted segment (the file name) and
+     * Drop updates whose :placeholders differ from the source line in code,
+     * which is what the code passes replacements to: a translation that
+     * drops or renames one would silently lose a name or number on the page.
+     *
+     * @param  array<string,string>  $updates
+     * @return array<string,string>
+     */
+    protected function rejectPlaceholderMismatches(array $updates, string $locale): array
+    {
+        $sourceLocale = TranslationConventions::SOURCE_LOCALE;
+        $source = $this->sourceLinesBySheetKey();
+        $rejected = [];
+
+        foreach ($updates as $key => $value) {
+            if (isset($source[$key]) && ! Placeholders::match($source[$key], $value)) {
+                $rejected[] = sprintf(
+                    '%s: %s has [%s], %s has [%s]',
+                    $key,
+                    $sourceLocale,
+                    implode(', ', Placeholders::in($source[$key])),
+                    $locale,
+                    implode(', ', Placeholders::in($value)),
+                );
+                unset($updates[$key]);
+            }
+        }
+
+        if (! empty($rejected)) {
+            $this->warn('  ⚠ Skipped '.count($rejected)." row(s) whose :placeholders differ from {$sourceLocale} (fix them in the sheet, then re-pull):");
+            foreach ($rejected as $line) {
+                $this->line("      - {$line}");
+            }
+        }
+
+        return $updates;
+    }
+
+    /**
+     * Source-locale lines keyed as push writes them to the sheet: the file's
+     * path with dots for slashes, then the dotted key within it.
+     *
+     * @return array<string,string>
+     */
+    protected function sourceLinesBySheetKey(): array
+    {
+        $lines = [];
+
+        foreach ($this->catalogue->lines(TranslationConventions::SOURCE_LOCALE) as $group => $groupLines) {
+            if ($group === TranslationCatalogue::JSON_GROUP) {
+                continue;
+            }
+
+            $prefix = str_replace('/', '.', $group);
+
+            foreach ($groupLines as $key => $line) {
+                $lines["{$prefix}.{$key}"] = $line;
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Group full keys by the file they belong to (see splitKey()) and
      * delegate per-file updates to the file writer. Reports stats afterward.
      *
      * @param  array<string,string>  $updates
