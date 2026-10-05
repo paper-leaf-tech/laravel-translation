@@ -154,6 +154,20 @@ class TranslationSheetTest extends TestCase
     }
 
     #[Test]
+    public function it_rejects_values_past_the_last_header(): void
+    {
+        $this->sheets->seed('Translations', [
+            ['key', 'group', 'default', 'en'],
+            ['failed', 'auth', 'Failed', 'Failed', 'stray note'],
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Column E has values but no header');
+
+        $this->sheet->read('en', ['en']);
+    }
+
+    #[Test]
     public function it_writes_the_header_and_rows_and_clears_what_was_left_over(): void
     {
         $this->sheets->seed('Translations', [

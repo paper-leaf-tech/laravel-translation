@@ -177,11 +177,7 @@ class TranslationSheet
             if ($header === '') {
                 foreach ($body as $cells) {
                     if ((string) ($cells[$index] ?? '') !== '') {
-                        throw new RuntimeException(sprintf(
-                            'Column %s has values but no header in the "%s" tab. Clear the column or add a header.',
-                            self::column($index + 1),
-                            $this->name(),
-                        ));
+                        $this->throwMissingHeaderError($index);
                     }
                 }
 
@@ -195,6 +191,15 @@ class TranslationSheet
             $columns[$header] = $index;
         }
 
+        // Check for values in columns beyond the header row
+        foreach ($body as $cells) {
+            foreach ($cells as $index => $cell) {
+                if ($index >= count($headers) && (string) $cell !== '') {
+                    $this->throwMissingHeaderError($index);
+                }
+            }
+        }
+
         $missing = array_values(array_diff([self::KEY, self::GROUP, self::DEFAULT, $source], array_keys($columns)));
 
         if ($missing !== []) {
@@ -206,5 +211,17 @@ class TranslationSheet
         }
 
         return $columns;
+    }
+
+    /**
+     * Throw an exception for a column with values but no header.
+     */
+    private function throwMissingHeaderError(int $columnIndex): void
+    {
+        throw new RuntimeException(sprintf(
+            'Column %s has values but no header in the "%s" tab. Clear the column or add a header.',
+            self::column($columnIndex + 1),
+            $this->name(),
+        ));
     }
 }
