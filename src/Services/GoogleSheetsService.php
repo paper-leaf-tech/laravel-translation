@@ -3,11 +3,8 @@
 namespace PaperleafTech\LaravelTranslation\Services;
 
 use Google\Client;
-use Google\Service\Exception;
 use Google\Service\Sheets;
 use Google\Service\Sheets\BatchUpdateSpreadsheetRequest;
-use Google\Service\Sheets\ClearValuesRequest;
-use Google\Service\Sheets\Request;
 use Google\Service\Sheets\Sheet;
 use Google\Service\Sheets\Spreadsheet;
 use Google\Service\Sheets\ValueRange;
@@ -91,7 +88,7 @@ class GoogleSheetsService
      */
     protected function initializeClient(): void
     {
-        $this->client = new Client;
+        $this->client = new Client();
         $this->client->setApplicationName('Laravel Translation Manager');
         $this->client->setScopes(config('laravel-translation.scopes'));
         $this->client->setAuthConfig(config('laravel-translation.credentials_path'));
@@ -148,7 +145,7 @@ class GoogleSheetsService
             );
 
             return $response->getValues() ?? [];
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -181,7 +178,7 @@ class GoogleSheetsService
             );
 
             return true;
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -197,11 +194,11 @@ class GoogleSheetsService
             $this->service->spreadsheets_values->clear(
                 $this->spreadsheetId,
                 self::qualifyRange($sheetName, $range),
-                new ClearValuesRequest
+                new \Google\Service\Sheets\ClearValuesRequest()
             );
 
             return true;
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -219,7 +216,7 @@ class GoogleSheetsService
             $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId, [
                 'fields' => 'sheets(properties(sheetId,title),conditionalFormats,protectedRanges(protectedRangeId,description),basicFilter)',
             ]);
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
 
@@ -250,7 +247,7 @@ class GoogleSheetsService
                 $this->spreadsheetId,
                 new BatchUpdateSpreadsheetRequest(['requests' => $requests]),
             );
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -258,7 +255,7 @@ class GoogleSheetsService
     /**
      * Handle Google API exceptions with helpful error messages
      */
-    protected function handleGoogleException(Exception $e): void
+    protected function handleGoogleException(\Google\Service\Exception $e): void
     {
         $errors = $e->getErrors();
         $message = $e->getMessage();
@@ -360,7 +357,7 @@ class GoogleSheetsService
         }
 
         try {
-            $request = new Request([
+            $request = new \Google\Service\Sheets\Request([
                 'addSheet' => [
                     'properties' => [
                         'title' => $sheetName,
@@ -368,7 +365,7 @@ class GoogleSheetsService
                 ],
             ]);
 
-            $batch = new BatchUpdateSpreadsheetRequest([
+            $batch = new \Google\Service\Sheets\BatchUpdateSpreadsheetRequest([
                 'requests' => [$request],
             ]);
 
@@ -377,7 +374,7 @@ class GoogleSheetsService
             $this->refreshSpreadsheetCache();
 
             return true;
-        } catch (Exception $e) {
+        } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }
     }
