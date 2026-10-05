@@ -3,7 +3,12 @@
 namespace PaperleafTech\LaravelTranslation\Services;
 
 use Google\Client;
+use Google\Service\Exception;
 use Google\Service\Sheets;
+use Google\Service\Sheets\BatchUpdateSpreadsheetRequest;
+use Google\Service\Sheets\ClearValuesRequest;
+use Google\Service\Sheets\Request;
+use Google\Service\Sheets\Sheet;
 use Google\Service\Sheets\Spreadsheet;
 use Google\Service\Sheets\ValueRange;
 use Illuminate\Support\Facades\File;
@@ -86,7 +91,7 @@ class GoogleSheetsService
      */
     protected function initializeClient(): void
     {
-        $this->client = new Client();
+        $this->client = new Client;
         $this->client->setApplicationName('Laravel Translation Manager');
         $this->client->setScopes(config('laravel-translation.scopes'));
         $this->client->setAuthConfig(config('laravel-translation.credentials_path'));
@@ -143,7 +148,7 @@ class GoogleSheetsService
             );
 
             return $response->getValues() ?? [];
-        } catch (\Google\Service\Exception $e) {
+        } catch (Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -176,7 +181,7 @@ class GoogleSheetsService
             );
 
             return true;
-        } catch (\Google\Service\Exception $e) {
+        } catch (Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -192,11 +197,60 @@ class GoogleSheetsService
             $this->service->spreadsheets_values->clear(
                 $this->spreadsheetId,
                 self::qualifyRange($sheetName, $range),
-                new \Google\Service\Sheets\ClearValuesRequest()
+                new ClearValuesRequest
             );
 
             return true;
-        } catch (\Google\Service\Exception $e) {
+        } catch (Exception $e) {
+            $this->handleGoogleException($e);
+        }
+    }
+
+    /**
+     * A tab's properties, conditional formats, protected ranges and filter,
+     * which formatting needs to replace its own rules. Null when the tab is
+     * missing.
+     */
+    public function getSheet(string $sheetName): ?Sheet
+    {
+        $this->ensureInitialized();
+
+        try {
+            $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId, [
+                'fields' => 'sheets(properties(sheetId,title),conditionalFormats,protectedRanges(protectedRangeId,description),basicFilter)',
+            ]);
+        } catch (Exception $e) {
+            $this->handleGoogleException($e);
+        }
+
+        foreach ($spreadsheet->getSheets() as $sheet) {
+            if ($sheet->getProperties()->getTitle() === $sheetName) {
+                return $sheet;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Apply Sheets API requests (formatting, protection, filters) in one call.
+     *
+     * @param  list<array<string, mixed>>  $requests
+     */
+    public function batchUpdate(array $requests): void
+    {
+        if ($requests === []) {
+            return;
+        }
+
+        $this->ensureInitialized();
+
+        try {
+            $this->service->spreadsheets->batchUpdate(
+                $this->spreadsheetId,
+                new BatchUpdateSpreadsheetRequest(['requests' => $requests]),
+            );
+        } catch (Exception $e) {
             $this->handleGoogleException($e);
         }
     }
@@ -204,7 +258,7 @@ class GoogleSheetsService
     /**
      * Handle Google API exceptions with helpful error messages
      */
-    protected function handleGoogleException(\Google\Service\Exception $e): void
+    protected function handleGoogleException(Exception $e): void
     {
         $errors = $e->getErrors();
         $message = $e->getMessage();
@@ -306,7 +360,7 @@ class GoogleSheetsService
         }
 
         try {
-            $request = new \Google\Service\Sheets\Request([
+            $request = new Request([
                 'addSheet' => [
                     'properties' => [
                         'title' => $sheetName,
@@ -314,7 +368,7 @@ class GoogleSheetsService
                 ],
             ]);
 
-            $batch = new \Google\Service\Sheets\BatchUpdateSpreadsheetRequest([
+            $batch = new BatchUpdateSpreadsheetRequest([
                 'requests' => [$request],
             ]);
 
@@ -323,7 +377,7 @@ class GoogleSheetsService
             $this->refreshSpreadsheetCache();
 
             return true;
-        } catch (\Google\Service\Exception $e) {
+        } catch (Exception $e) {
             $this->handleGoogleException($e);
         }
     }
