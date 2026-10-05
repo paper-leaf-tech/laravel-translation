@@ -4,6 +4,13 @@ Manage Laravel translation strings using Google Sheets. This package syncs your 
 
 ## Upgrading
 
+### From 0.4.x to 0.5.0
+
+- One `Translations` tab replaces the `Translations - {locale}` tabs. Before upgrading, run `php artisan translations:pull` on 0.4 so code holds the latest translations. After upgrading, run `php artisan translations:push` to build the new tab, then delete the old tabs.
+- `translations:push` no longer takes a locale; it always writes every locale. New options: `--dry-run` and `--fresh` (replaces `--clear` and `--force-initial`).
+- `translations:pull {locale?}` reads the locale's column from the single tab.
+- Config: `key_column`, `original_value_column`, `updated_value_column` and `header_row` are gone; `sheet`, `source_locale` and `format` are new. Update a published config to match `config/laravel-translation.php`.
+
 ### From 0.2.x to 0.3.0
 
 - `translations:pull` now updates existing translation files in place rather than regenerating them. Comments, blank lines, indentation, and quote styles are preserved.
@@ -22,8 +29,8 @@ Manage Laravel translation strings using Google Sheets. This package syncs your 
 
 - 🔄 **Bi-directional sync** — Push Laravel translations to Google Sheets and pull updates back
 - ✏️ **Surgical pull** — Updates land in place via AST manipulation; comments, blank lines, indentation, and quote styles are preserved
-- 🌍 **Multi-language by default** — Run `translations:push` with no argument to sync every locale under `lang/`
-- 🔤 **Translator-friendly sheets** — Non-English sheets show the English source alongside each translation
+- 🌍 **One sheet, every locale** — `translations:push` writes every locale under `lang/` to a single `Translations` tab, one column per locale
+- 🔤 **Editor-friendly sheets** — English is editable in the sheet, conflicts with code are listed rather than overwritten, and your own columns (`status`, `notes`, …) are kept
 - 🔐 **Service Account authentication** — Simple, secure auth using Google service accounts
 - 📝 **Nested translations** — Automatically handles nested translation arrays using dot notation
 - 🗂️ **Local JSON backups** — Sheet snapshots saved to a gitignored folder before every push
@@ -98,60 +105,58 @@ TRANSLATION_SPREADSHEET_ID="your-spreadsheet-id-here"
 # TRANSLATION_BACKUP_AUTO_PRUNE=true
 ```
 
-You can customize column letters, header row, and other settings by publishing `config/laravel-translation.php`.
+You can customize the tab name, source locale, sheet formatting and backups by publishing `config/laravel-translation.php`. The matching env vars are `TRANSLATION_SHEET` (default `Translations`) and `TRANSLATION_FORMAT_SHEET` (default `true`); the source locale is the `source_locale` config key (default `en`).
 
 ## Sheet layout
 
-Each locale gets its own sheet tab named `Translations - {locale}`. Tabs are created automatically on first push.
+Every locale lives in one tab, `Translations` (configurable via `TRANSLATION_SHEET`):
 
-**Source locale (`en`):**
+| key | group | default | en | fr | status | notes |
+|---|---|---|---|---|---|---|
+| `failed` | `auth` | These credentials do not match our records. | These credentials do not match our records. | Identifiants invalides. | reviewed | |
 
-| Column A (Key) | Column B (Original Value) | Column C (Updated Value) |
-|---|---|---|
-| `auth.failed` | `These credentials do not match our records.` | (editor's revised wording) |
+- **key / group** — the line's key and its file (`auth`, `resources/schools`). Pull writes to `lang/{locale}/{group}.php`.
+- **default** — the English in code as of the last push. Push compares it with code and the `en` column to tell a developer's change from an editor's. It is protected (with a warning) and can be hidden.
+- **en** — editable English. Edit the wording here and pull it into code.
+- **one column per locale** — columns are found by header, and a header counts as a locale when `lang/` has a directory with that name. Push adds a column when a new locale appears.
+- **anything else** (`status`, `notes`, …) — kept with its row on every push.
 
-**Other locales (e.g. `fr`):**
-
-| Column A (Key) | Column B (English Source) | Column C (Translation) |
-|---|---|---|
-| `auth.failed` | `These credentials do not match our records.` | `Identifiants invalides.` |
-
-On pull for a non-source locale, rows with an empty Column C are skipped — they aren't translated yet, so they fall through to Laravel's `fallback_locale` at runtime instead of being written as English into the target file.
+When code and the sheet both change a line's English, push keeps the sheet's text and lists the key, so an editor's work is never overwritten silently. A blank cell never erases anything on pull.
 
 ## Usage
 
 ### Push translations to Google Sheets
 
 ```bash
-# Push every locale under lang/
+# Push every locale under lang/ to the Translations tab
 php artisan translations:push
 
-# Push a single locale
-php artisan translations:push en
+# See what would change without writing
+php artisan translations:push --dry-run
 
-# Skip backups for this run
+# Rebuild the tab from code, ignoring what is in it (a backup is still taken)
+php artisan translations:push --fresh
+
+# Skip the backup for this run
 php artisan translations:push --no-backup
-
-# Clear and re-initialize the sheet
-php artisan translations:push en --clear
 ```
 
-When iterating multiple locales, the source locale (`en`) is always pushed first so its strings are available to populate Column B in the other sheets.
+Push reports new and removed keys, English changed in code (and which translations need review), conflicts, and empty cells it filled from code. Rows whose key is gone from code are dropped; their notes survive in the backup.
 
 ### Pull translations from Google Sheets
 
 ```bash
-# Pull every locale that has a directory under lang/
+# Pull every locale column
 php artisan translations:pull
 
-# Pull a single locale
+# Pull one locale
 php artisan translations:pull fr
 
 # Preview without writing files
 php artisan translations:pull --dry-run
 ```
 
-Pull discovery scans `lang/` directories. Locales without a matching `Translations - {locale}` sheet tab are skipped with a warning — only locales whose tab exists in the spreadsheet get pulled.
+Pull rejects a value whose `:placeholders` differ from the English line in code, lists it, and exits with a failure after writing the rest. Rows for JSON (`*`) and package (`package::file`) groups are ignored; edit those files directly.
 
 #### Surgical updates
 
@@ -191,28 +196,47 @@ It exits non-zero on any problem, so it can gate CI:
 
 The package is usually a dev dependency, so run the check in a CI step that installs dev dependencies.
 
+## Customizing the sheet
+
+Push formats the tab after writing it (turn this off with `TRANSLATION_FORMAT_SHEET=false`) and then fires `PaperleafTech\LaravelTranslation\Events\TranslationsPushed`. Listen for it to add your own tabs, dropdowns or colours:
+
+```php
+use Illuminate\Support\Facades\Event;
+use PaperleafTech\LaravelTranslation\Events\TranslationsPushed;
+use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+
+Event::listen(function (TranslationsPushed $event) {
+    app(GoogleSheetsService::class)->batchUpdate([
+        ['setDataValidation' => [
+            'range' => ['sheetId' => $event->sheetId, 'startRowIndex' => 1, 'startColumnIndex' => array_search('status', $event->headers), 'endColumnIndex' => array_search('status', $event->headers) + 1],
+            'rule' => ['condition' => ['type' => 'ONE_OF_LIST', 'values' => [['userEnteredValue' => 'draft'], ['userEnteredValue' => 'approved']]], 'showCustomUi' => true],
+        ]],
+    ]);
+});
+```
+
+The event carries `sheetName`, `sheetId`, `headers` and the written `rows`. The package's own conditional rules contain `N("laravel-translation")=0` in their formula and are replaced on every push; rules you add are left alone.
+
 ## Backups
 
-Before each push, the existing rows on the locale's sheet are snapshotted as a JSON file:
+Before each push, the tab's cells are saved as JSON:
 
 ```
 storage/app/translation-backups/
-├── .gitignore           ← package writes this on first run (contents: "*\n!.gitignore")
-├── en/
-│   ├── 2026-05-08_143012.json
-│   └── 2026-05-08_152244.json
-└── fr/
-    └── 2026-05-08_143015.json
+├── .gitignore           ← written on first run ("*\n!.gitignore")
+├── 2026-10-05_143012.json
+└── 2026-10-05_152244.json
 ```
 
-`TRANSLATION_BACKUP_KEEP` controls retention per locale (default 5). `TRANSLATION_BACKUP_AUTO_PRUNE` toggles auto-pruning of older snapshots. Set `TRANSLATION_BACKUP_PATH=false` (or `null`) in `.env` to disable backups entirely; the `--no-backup` flag still works as a one-off override.
+`TRANSLATION_BACKUP_KEEP` controls how many are kept (default 5). `TRANSLATION_BACKUP_AUTO_PRUNE` toggles pruning. Set `TRANSLATION_BACKUP_PATH=false` to disable backups; `--no-backup` skips one run.
 
 ## Workflow
 
-1. **Initial push** — `php artisan translations:push` from a project that already has `lang/en/` (and optionally `lang/fr/`, etc.). Each locale gets its own tab.
-2. **Translators work in the sheet** — non-source tabs show English in Column B and let translators fill Column C.
-3. **Pull** — `php artisan translations:pull` writes Column C back to the matching `lang/{locale}/*.php` files. Untranslated rows are left alone.
-4. **Re-push** when you add new keys to your code. Column C is preserved for keys whose English hasn't changed; if English changes, the row is flagged "review needed" in the command output but the existing translation is kept.
+1. **Push** — `php artisan translations:push` builds or updates the `Translations` tab from every locale under `lang/`.
+2. **Review in the sheet** — editors adjust English in the `en` column; translators fill the locale columns.
+3. **Pull** — `php artisan translations:pull` writes non-blank cells back into existing `lang/{locale}/*.php` keys.
+4. **Check** — `php artisan translations:check` in CI catches keys or placeholders that drifted.
+5. **Re-push** after adding keys in code. Sheet edits and translations are kept.
 
 ### Adding a new key (translator-driven)
 
@@ -230,8 +254,8 @@ Workflow: developer adds `'captcha' => ['invalid' => '']` (or any default) to `l
 Pull will not create the locale directory. To add a new locale:
 
 1. `mkdir lang/fr` and add starter files (e.g., `lang/fr/auth.php` returning `[]` or a copy of the English file).
-2. `php artisan translations:push fr` — creates the `Translations - fr` tab populated with English in Column B.
-3. Translator fills Column C in the sheet.
+2. `php artisan translations:push` — adds an `fr` column to the `Translations` tab, filled from code.
+3. Translator fills the `fr` column in the sheet.
 4. `php artisan translations:pull fr` — surgically applies translations to your starter files.
 
 ## Troubleshooting

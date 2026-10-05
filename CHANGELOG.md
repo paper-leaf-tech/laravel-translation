@@ -4,6 +4,34 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+### Breaking Changes
+- One `Translations` tab replaces the `Translations - {locale}` tabs. Columns are `key`, `group`, `default`, the source locale, one column per locale, then any columns you add, found by header name.
+- `translations:push` takes no locale and always writes every locale. `--clear` and `--force-initial` are replaced by `--fresh`.
+- Config: removed `key_column`, `original_value_column`, `updated_value_column` and `header_row`; added `sheet`, `source_locale` and `format`.
+- Backups are one JSON file per push in the backup directory instead of one per locale.
+
+### Added
+- The sheet's English is editable. `default` holds the English from code as of the last push; when code and the sheet both change a line, push keeps the sheet's text and lists the conflict.
+- Columns you add to the tab (`status`, `notes`, …) are kept with their row on every push.
+- `translations:push --dry-run`.
+- Sheet formatting after each push (frozen header, filter, widths, red empty translations, protected key/group/default), switchable with `TRANSLATION_FORMAT_SHEET`.
+- `TranslationsPushed` event for app-specific tabs and formatting.
+- `source_locale` config, used by push, pull and `translations:check`.
+- `translations:check` treats each JSON key as its own English when there is no `lang/{source}.json`, the way Laravel renders it.
+- Laravel 12 and 13 support in the test suite.
+
+### Changed
+- `translations:pull` exits with a failure when it rejects a value for mismatched `:placeholders` (the other values are still written).
+- A malformed `lang/{locale}.json` now fails with the file's path instead of being read as empty.
+
+### Upgrading
+1. On 0.4.0, run `php artisan translations:pull` so code holds the latest translations.
+2. Upgrade to 0.5.0 and update a published config to the new keys.
+3. Run `php artisan translations:push` to build the `Translations` tab.
+4. Delete the old `Translations - {locale}` tabs.
+
 ## [0.4.0] - 2026-10-05
 
 ### Added
@@ -94,7 +122,8 @@ All notable changes to `laravel-translation` will be documented in this file.
 - Keep original cell values
 - Added sheet backups
 
-[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.2.0...v0.3.0
