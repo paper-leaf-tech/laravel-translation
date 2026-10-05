@@ -34,7 +34,7 @@ Manage Laravel translation strings using Google Sheets. This package syncs your 
 - 🔐 **Service Account authentication** — Simple, secure auth using Google service accounts
 - 📝 **Nested translations** — Automatically handles nested translation arrays using dot notation
 - 🗂️ **Local JSON backups** — Sheet snapshots saved to a gitignored folder before every push
-- 🔍 **Dry-run mode** — Preview pull changes before applying them
+- 🔍 **Dry-run mode** — `--dry-run` previews what push or pull would change without writing anything
 - ✅ **Drift check** — `translations:check` fails CI when a locale's keys or `:placeholders` drift from the source
 
 ## Installation
@@ -123,6 +123,8 @@ Every locale lives in one tab, `Translations` (configurable via `TRANSLATION_SHE
 
 When code and the sheet both change a line's English, push keeps the sheet's text and lists the key, so an editor's work is never overwritten silently. A blank cell never erases anything on pull.
 
+Push re-sorts and rewrites every row, so Google cell comments, cell notes and manual cell colours do not stay with their translation. Keep review state in the `status` and `notes` columns instead; those move with their row.
+
 ## Usage
 
 ### Push translations to Google Sheets
@@ -171,7 +173,7 @@ Pull will **not**:
 - Append new keys. If the sheet has `auth.captcha.invalid` and your `lang/{locale}/auth.php` doesn't have a `captcha.invalid` entry, the row is skipped with a warning. Add the key to the file in your editor (with whatever default value you want), then re-pull to populate it.
 - Touch keys whose current value isn't a simple string literal (e.g., function calls, concatenation, integers). Those are skipped with a warning.
 - Remove keys. Anything in your file that isn't on the sheet is left alone.
-- Apply a value whose `:placeholders` differ from the source-locale line in code. A translation that drops or renames `:name` would silently lose that value on the page, so the row is skipped with a warning; fix it in the sheet and re-pull. Placeholders are compared case-insensitively, since Laravel treats `:name`, `:Name` and `:NAME` as the same replacement.
+- Apply a value whose `:placeholders` differ from the source-locale line in code. A translation that drops or renames `:name` would silently lose that value on the page, so the row is skipped with a warning and pull exits with a failure code once the rest are written; fix it in the sheet and re-pull. Placeholders are compared case-insensitively, since Laravel treats `:name`, `:Name` and `:NAME` as the same replacement.
 
 ### Check translations for drift
 
