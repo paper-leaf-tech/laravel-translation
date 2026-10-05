@@ -2,408 +2,291 @@
 
 namespace PaperleafTech\LaravelTranslation\Tests\Feature;
 
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
-use Mockery;
-use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
+use PaperleafTech\LaravelTranslation\Events\TranslationsPushed;
+use PaperleafTech\LaravelTranslation\Tests\Support\FakeGoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
 
 class PushCommandTest extends TestCase
 {
+    private const HEADER = ['key', 'group', 'default', 'en', 'fr'];
+
+    private const FAILED = 'These credentials do not match our records.';
+
+    private FakeGoogleSheetsService $sheets;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $this->createEnglishTranslations();
+
+        $this->useTemporaryLangPath();
+        $this->sheets = $this->fakeSheets();
+        $this->writeLangFiles([
+            'en/auth.php' => ['failed' => self::FAILED, 'throttle' => 'Too many attempts.'],
+            'en/resources/schools.php' => ['title' => 'Schools'],
+            'fr/auth.php' => ['failed' => 'Identifiants invalides.'],
+        ]);
     }
 
-    protected function tearDown(): void
+    /**
+     * @param  list<list<string>>  $rows
+     */
+    private function seedSheet(array $rows, array $header = self::HEADER): void
+    {
+        $this->sheets->seed('Translations', [$header, ...$rows]);
+    }
+
+    private function rows(): array
+    {
+        return $this->sheets->rows('Translations');
+    }
+
+    #[Test]
+    public function it_builds_the_sheet_from_code_on_the_first_push(): void
+    {
+        $this->artisan('translations:push')
+            ->expectsOutputToContain('3 new key(s) added')
+            ->assertSuccessful();
+
+        $this->assertSame([
+            self::HEADER,
+            ['failed', 'auth', self::FAILED, self::FAILED, 'Identifiants invalides.'],
+            ['throttle', 'auth', 'Too many attempts.', 'Too many attempts.'],
+            ['title', 'resources/schools', 'Schools', 'Schools'],
+        ], $this->rows());
+    }
+
+    #[Test]
+    public function it_fails_without_the_source_locale_directory(): void
     {
         File::deleteDirectory(lang_path('en'));
-        File::deleteDirectory(lang_path('fr'));
-        File::deleteDirectory(lang_path('test'));
-        File::deleteDirectory(lang_path('vendor'));
-        File::deleteDirectory(lang_path('.cache'));
 
-        parent::tearDown();
-    }
+        $this->artisan('translations:push')->assertFailed();
 
-    protected function createEnglishTranslations(): void
-    {
-        File::ensureDirectoryExists(lang_path('en'));
-        File::put(lang_path('en/auth.php'), <<<'PHP'
-<?php
-
-return [
-    'failed' => 'These credentials do not match our records.',
-    'throttle' => 'Too many login attempts.',
-];
-PHP);
-        File::put(lang_path('en/validation.php'), <<<'PHP'
-<?php
-
-return [
-    'required' => 'The :attribute field is required.',
-    'email' => 'The :attribute must be a valid email address.',
-];
-PHP);
-    }
-
-    protected function createFrenchTranslations(): void
-    {
-        File::ensureDirectoryExists(lang_path('fr'));
-        File::put(lang_path('fr/auth.php'), <<<'PHP'
-<?php
-
-return [
-    'failed' => 'Identifiants invalides.',
-];
-PHP);
-    }
-
-    protected function mockSheets(): Mockery\MockInterface
-    {
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('createSheetIfMissing')->andReturn(false)->byDefault();
-        $mock->shouldReceive('getSheetData')->andReturn([])->byDefault();
-        $mock->shouldReceive('updateSheetData')->andReturn(true)->byDefault();
-        $mock->shouldReceive('clearSheetData')->andReturn(true)->byDefault();
-        $mock->shouldReceive('getSheetId')->andReturn(123)->byDefault();
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://docs.google.com/spreadsheets/d/test-id/edit')->byDefault();
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        return $mock;
+        $this->assertArrayNotHasKey('Translations', $this->sheets->tabs);
     }
 
     #[Test]
-    public function it_clears_leftover_rows_below_written_data(): void
+    public function it_keeps_sheet_edits_translations_and_extra_columns(): void
     {
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'These credentials do not match our records.', ''],
-            ['auth.removed', 'Gone from code', ''],
-            ['auth.throttle', 'Too many login attempts.', ''],
-            ['validation.required', 'The :attribute field is required.', ''],
-            ['validation.email', 'The :attribute must be a valid email address.', ''],
+        $this->seedSheet([
+            ['failed', 'auth', self::FAILED, 'Those credentials are wrong.', 'Mauvais identifiants.', 'reviewed', 'Shorter'],
+            ['throttle', 'auth', 'Too many attempts.', 'Too many attempts.', '', '', ''],
+            ['title', 'resources/schools', 'Schools', 'Schools', '', 'draft', ''],
+        ], [...self::HEADER, 'status', 'notes']);
+
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
+
+        $this->assertSame([
+            [...self::HEADER, 'status', 'notes'],
+            ['failed', 'auth', self::FAILED, 'Those credentials are wrong.', 'Mauvais identifiants.', 'reviewed', 'Shorter'],
+            ['throttle', 'auth', 'Too many attempts.', 'Too many attempts.'],
+            ['title', 'resources/schools', 'Schools', 'Schools', '', 'draft'],
+        ], $this->rows());
+    }
+
+    #[Test]
+    public function it_updates_english_changed_in_code_and_flags_translations_for_review(): void
+    {
+        $this->seedSheet([['failed', 'auth', 'Old text', 'Old text', 'Ancien texte']]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])
+            ->expectsOutputToContain('need their translations reviewed')
+            ->expectsOutputToContain('- auth.failed')
+            ->assertSuccessful();
+
+        $this->assertSame(['failed', 'auth', self::FAILED, self::FAILED, 'Ancien texte'], $this->rows()[1]);
+    }
+
+    #[Test]
+    public function it_keeps_the_sheet_english_when_both_sides_changed(): void
+    {
+        $this->seedSheet([['failed', 'auth', 'Old text', 'Sheet text', '']]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])
+            ->expectsOutputToContain('changed in both code and the sheet')
+            ->assertSuccessful();
+
+        $this->assertSame(['failed', 'auth', self::FAILED, 'Sheet text', 'Identifiants invalides.'], $this->rows()[1]);
+    }
+
+    #[Test]
+    public function it_fills_blank_cells_from_code(): void
+    {
+        $this->seedSheet([['failed', 'auth', self::FAILED, self::FAILED, '']]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])
+            ->expectsOutputToContain('1 empty cell(s) filled from code')
+            ->assertSuccessful();
+
+        $this->assertSame('Identifiants invalides.', $this->rows()[1][4]);
+    }
+
+    #[Test]
+    public function it_drops_rows_for_keys_removed_from_code(): void
+    {
+        $this->seedSheet([
+            ['failed', 'auth', self::FAILED, self::FAILED, ''],
+            ['gone', 'auth', 'Gone', 'Gone', 'Parti'],
+            ['throttle', 'auth', 'Too many attempts.', 'Too many attempts.', ''],
+            ['title', 'resources/schools', 'Schools', 'Schools', ''],
         ]);
 
-        // Header + 4 keys occupy rows 1-5; the old sixth row must be cleared.
-        $mock->shouldReceive('clearSheetData')
-            ->with('Translations - en', 'A6:C')
-            ->once()
-            ->andReturn(true);
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
-            ->expectsOutputToContain('1 key(s) removed')
-            ->assertSuccessful();
-    }
-
-    #[Test]
-    public function it_fails_when_translation_directory_does_not_exist(): void
-    {
-        $this->mockSheets();
-
-        $this->artisan('translations:push', ['lang' => 'nonexistent'])
-            ->expectsOutputToContain('Translation directory not found')
-            ->assertFailed();
-    }
-
-    #[Test]
-    public function it_collects_translations_from_files(): void
-    {
-        $this->mockSheets();
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
-            ->expectsOutputToContain('Found 4 translation key(s)')
-            ->assertSuccessful();
-    }
-
-    #[Test]
-    public function it_skips_backup_when_no_backup_flag_is_used(): void
-    {
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'Old', ''],
-        ]);
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
-            ->assertSuccessful();
-
-        $this->assertFalse(File::isDirectory($this->backupPath()));
-    }
-
-    #[Test]
-    public function it_writes_local_backup_when_sheet_has_data(): void
-    {
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'Old', 'Edited'],
-        ]);
-
-        $this->artisan('translations:push', ['lang' => 'en'])
-            ->assertSuccessful();
-
-        $localeDir = $this->backupPath().'/en';
-        $this->assertTrue(File::isDirectory($localeDir));
-        $files = File::files($localeDir);
-        $this->assertCount(1, $files);
-
-        $payload = json_decode(File::get($files[0]->getPathname()), true);
-        $this->assertSame('en', $payload['locale']);
-        $this->assertContains(['auth.failed', 'Old', 'Edited'], $payload['rows']);
-    }
-
-    #[Test]
-    public function it_creates_gitignore_in_backup_root_on_first_run(): void
-    {
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'Old', ''],
-        ]);
-
-        $this->artisan('translations:push', ['lang' => 'en'])
-            ->assertSuccessful();
-
-        $gitignore = $this->backupPath().'/.gitignore';
-        $this->assertFileExists($gitignore);
-        $this->assertSame("*\n!.gitignore\n", File::get($gitignore));
-    }
-
-    #[Test]
-    public function it_creates_sheet_tab_named_with_prefix(): void
-    {
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->once()->with('Translations - en')->andReturn(true);
-        $mock->shouldReceive('getSheetData')->andReturn([]);
-        $mock->shouldReceive('updateSheetData')->andReturn(true);
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
-            ->expectsOutputToContain('Created new sheet tab: Translations - en')
-            ->assertSuccessful();
-    }
-
-    #[Test]
-    public function it_does_not_announce_when_sheet_already_exists(): void
-    {
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('createSheetIfMissing')->andReturn(false);
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
-            ->doesntExpectOutputToContain('Created new sheet tab')
-            ->assertSuccessful();
-    }
-
-    #[Test]
-    public function it_pushes_all_locales_when_no_arg_given(): void
-    {
-        $this->createFrenchTranslations();
-
-        $captured = [];
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->with('Translations - en')->once()->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->with('Translations - fr')->once()->andReturn(true);
-        $mock->shouldReceive('getSheetData')->andReturn([]);
-        $mock->shouldReceive('updateSheetData')
-            ->andReturnUsing(function ($sheet, $range, $rows) use (&$captured) {
-                $captured[$sheet] = $rows;
-
-                return true;
-            });
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
         $this->artisan('translations:push', ['--no-backup' => true])
-            ->expectsOutputToContain('=== en ===')
-            ->expectsOutputToContain('=== fr ===')
+            ->expectsOutputToContain('- auth.gone')
             ->assertSuccessful();
 
-        $this->assertArrayHasKey('Translations - en', $captured);
-        $this->assertArrayHasKey('Translations - fr', $captured);
-
-        // English headers
-        $this->assertSame(['Key', 'Original Value', 'Updated Value'], $captured['Translations - en'][0]);
-        // French headers
-        $this->assertSame(['Key', 'English (Source)', 'Translation'], $captured['Translations - fr'][0]);
-
-        // French sheet should have English in column B
-        $frRows = array_slice($captured['Translations - fr'], 1);
-        $authFailed = collect($frRows)->firstWhere(0, 'auth.failed');
-        $this->assertNotNull($authFailed);
-        $this->assertSame('These credentials do not match our records.', $authFailed[1]);
-        $this->assertSame('Identifiants invalides.', $authFailed[2]);
+        $this->assertCount(4, $this->rows());
+        $this->assertNotContains('gone', array_column($this->rows(), 0));
     }
 
     #[Test]
-    public function it_skips_vendor_and_dot_directories_when_discovering_locales(): void
+    public function it_adds_a_column_for_a_new_locale_after_the_existing_ones(): void
     {
-        File::ensureDirectoryExists(lang_path('vendor/some-package/en'));
-        File::ensureDirectoryExists(lang_path('.cache'));
+        $this->writeLangFiles(['es/auth.php' => ['failed' => 'Credenciales inválidas.']]);
+        $this->seedSheet([['failed', 'auth', self::FAILED, self::FAILED, '', 'note']], [...self::HEADER, 'notes']);
 
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldNotReceive('createSheetIfMissing')->with('Translations - vendor');
-        $mock->shouldNotReceive('createSheetIfMissing')->with('Translations - .cache');
-        $mock->shouldReceive('createSheetIfMissing')->with('Translations - en')->andReturn(false);
-        $mock->shouldReceive('getSheetData')->andReturn([]);
-        $mock->shouldReceive('updateSheetData')->andReturn(true);
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
 
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        $this->artisan('translations:push', ['--no-backup' => true])
-            ->assertSuccessful();
+        $this->assertSame([...self::HEADER, 'es', 'notes'], $this->rows()[0]);
+        $this->assertSame(['failed', 'auth', self::FAILED, self::FAILED, 'Identifiants invalides.', 'Credenciales inválidas.', 'note'], $this->rows()[1]);
     }
 
     #[Test]
-    public function it_continues_after_per_locale_failure(): void
+    public function it_keeps_the_column_of_a_locale_whose_directory_was_removed(): void
     {
-        $this->createFrenchTranslations();
+        $this->seedSheet([['failed', 'auth', self::FAILED, self::FAILED, '', 'Ungültige Anmeldedaten.']], [...self::HEADER, 'de']);
 
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->andReturn(false);
-        $mock->shouldReceive('getSheetData')->andReturn([]);
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
 
-        // English push succeeds; French push throws on updateSheetData
-        $mock->shouldReceive('updateSheetData')->with('Translations - en', Mockery::any(), Mockery::any())->once()->andReturn(true);
-        $mock->shouldReceive('updateSheetData')->with('Translations - fr', Mockery::any(), Mockery::any())->once()->andThrow(new \RuntimeException('boom'));
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        $this->artisan('translations:push', ['--no-backup' => true])
-            ->expectsOutputToContain('Failed locales: fr')
-            ->assertFailed();
+        $this->assertSame([...self::HEADER, 'de'], $this->rows()[0]);
+        $this->assertSame('Ungültige Anmeldedaten.', $this->rows()[1][5]);
     }
 
     #[Test]
-    public function it_pushes_source_locale_first(): void
+    public function it_backs_up_the_sheet_before_writing(): void
     {
-        $this->createFrenchTranslations();
+        $this->seedSheet([['failed', 'auth', 'Old', 'Old', 'Ancien']]);
+        $before = $this->rows();
 
-        $order = [];
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->andReturnUsing(function ($name) use (&$order) {
-            $order[] = $name;
-
-            return false;
-        });
-        $mock->shouldReceive('getSheetData')->andReturn([]);
-        $mock->shouldReceive('updateSheetData')->andReturn(true);
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        $this->artisan('translations:push', ['--no-backup' => true])
+        $this->artisan('translations:push')
+            ->expectsOutputToContain('Backup saved')
             ->assertSuccessful();
 
-        $this->assertSame(['Translations - en', 'Translations - fr'], $order);
+        $backups = File::files($this->backupPath());
+        $this->assertCount(1, $backups);
+        $this->assertSame($before, json_decode(File::get($backups[0]->getPathname()), true)['rows']);
     }
 
     #[Test]
-    public function it_logs_review_count_when_english_source_changed_for_non_source_locale(): void
+    public function it_skips_the_backup_when_asked_or_disabled(): void
     {
-        $this->createFrenchTranslations();
+        $this->seedSheet([['failed', 'auth', 'Old', 'Old', '']]);
 
-        $mock = Mockery::mock(GoogleSheetsService::class);
-        $mock->shouldReceive('clearSheetData')->andReturn(true);
-        $mock->shouldReceive('createSheetIfMissing')->andReturn(false);
-        $mock->shouldReceive('getSheetData')->andReturnUsing(function ($sheet, $range) {
-            if ($sheet === 'Translations - fr') {
-                return [
-                    ['Key', 'English (Source)', 'Translation'],
-                    ['auth.failed', 'OUTDATED ENGLISH', 'Identifiants invalides.'],
-                ];
-            }
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
+        $this->assertDirectoryDoesNotExist($this->backupPath());
 
-            return [];
-        });
-        $mock->shouldReceive('updateSheetData')->andReturn(true);
-        $mock->shouldReceive('getSheetId')->andReturn(123);
-        $mock->shouldReceive('getSpreadsheetUrl')->andReturn('https://example.test/edit');
-
-        $this->app->instance(GoogleSheetsService::class, $mock);
-
-        $this->artisan('translations:push', ['--no-backup' => true])
-            ->expectsOutputToContain('had their English source change')
-            ->assertSuccessful();
-    }
-
-    #[Test]
-    public function it_skips_backup_when_disabled_via_env(): void
-    {
         config()->set('laravel-translation.backup.path', false);
-
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'Old', ''],
-        ]);
-
-        $this->artisan('translations:push', ['lang' => 'en'])
-            ->expectsOutputToContain('Backups disabled via TRANSLATION_BACKUP_PATH')
-            ->assertSuccessful();
-
-        $this->assertFalse(File::isDirectory($this->backupPath()));
-    }
-
-    #[Test]
-    public function it_skips_backup_when_path_is_null(): void
-    {
-        config()->set('laravel-translation.backup.path', null);
-
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('getSheetData')->andReturn([
-            ['Key', 'Original Value', 'Updated Value'],
-            ['auth.failed', 'Old', ''],
-        ]);
-
-        $this->artisan('translations:push', ['lang' => 'en'])
-            ->expectsOutputToContain('Backups disabled via TRANSLATION_BACKUP_PATH')
+        $this->artisan('translations:push')
+            ->expectsOutputToContain('Backups disabled')
             ->assertSuccessful();
     }
 
     #[Test]
-    public function it_handles_nested_translations(): void
+    public function it_writes_nothing_on_a_dry_run(): void
     {
-        File::put(lang_path('en/nested.php'), <<<'PHP'
-<?php
-
-return [
-    'level1' => [
-        'level2' => [
-            'level3' => 'Deep value',
-        ],
-    ],
-];
-PHP);
-
-        $captured = null;
-        $mock = $this->mockSheets();
-        $mock->shouldReceive('updateSheetData')
-            ->with(Mockery::any(), Mockery::any(), Mockery::capture($captured))
-            ->andReturn(true);
-
-        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
+        $this->artisan('translations:push', ['--dry-run' => true])
+            ->expectsOutputToContain('3 new key(s) added')
+            ->expectsOutputToContain('Dry run')
             ->assertSuccessful();
 
-        $keys = array_column($captured, 0);
-        $this->assertContains('nested.level1.level2.level3', $keys);
+        $this->assertArrayNotHasKey('Translations', $this->sheets->tabs);
+
+        $this->seedSheet([['failed', 'auth', 'Old', 'Old', '']]);
+        $before = $this->rows();
+
+        $this->artisan('translations:push', ['--dry-run' => true])->assertSuccessful();
+
+        $this->assertSame($before, $this->rows());
+        $this->assertDirectoryDoesNotExist($this->backupPath());
+    }
+
+    #[Test]
+    public function it_rebuilds_from_code_with_fresh(): void
+    {
+        $this->seedSheet([['failed', 'auth', self::FAILED, 'Sheet text', 'Feuille', 'note']], [...self::HEADER, 'notes']);
+
+        $this->artisan('translations:push', ['--fresh' => true, '--no-backup' => true])->assertSuccessful();
+
+        $this->assertSame(self::HEADER, $this->rows()[0]);
+        $this->assertSame(['failed', 'auth', self::FAILED, self::FAILED, 'Identifiants invalides.'], $this->rows()[1]);
+    }
+
+    #[Test]
+    public function it_stops_when_a_required_column_is_missing(): void
+    {
+        $this->sheets->seed('Translations', [['key', 'group', 'en', 'fr'], ['failed', 'auth', 'x', 'y']]);
+
+        $this->artisan('translations:push')
+            ->expectsOutputToContain('missing the column(s): default')
+            ->assertFailed();
+
+        $this->assertSame([['key', 'group', 'en', 'fr'], ['failed', 'auth', 'x', 'y']], $this->rows());
+    }
+
+    #[Test]
+    public function it_dispatches_translations_pushed_after_writing(): void
+    {
+        Event::fake([TranslationsPushed::class]);
+
+        $this->artisan('translations:push', ['--dry-run' => true])->assertSuccessful();
+        Event::assertNotDispatched(TranslationsPushed::class);
+
+        $this->artisan('translations:push')->assertSuccessful();
+        Event::assertDispatched(TranslationsPushed::class, fn (TranslationsPushed $event): bool => $event->sheetName === 'Translations'
+            && $event->sheetId === 1000
+            && $event->headers === self::HEADER
+            && count($event->rows) === 3);
+    }
+
+    #[Test]
+    public function it_formats_the_sheet_only_when_enabled(): void
+    {
+        $this->artisan('translations:push')->assertSuccessful();
+        $this->assertSame([], $this->sheets->batches);
+
+        config()->set('laravel-translation.format', true);
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
+
+        $this->assertCount(1, $this->sheets->batches);
+        $this->assertNotEmpty(array_filter($this->sheets->batches[0], fn (array $request): bool => isset($request['addProtectedRange'])));
+    }
+
+    #[Test]
+    public function it_warns_about_duplicate_rows_and_keeps_the_first(): void
+    {
+        $this->seedSheet([
+            ['failed', 'auth', self::FAILED, self::FAILED, 'Premier'],
+            ['failed', 'auth', self::FAILED, self::FAILED, 'Second'],
+        ]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])
+            ->expectsOutputToContain('duplicate row(s)')
+            ->assertSuccessful();
+
+        $this->assertSame('Premier', $this->rows()[1][4]);
+        $this->assertCount(4, $this->rows());
+    }
+
+    #[Test]
+    public function it_keeps_newlines_and_spaces_in_cells(): void
+    {
+        $this->seedSheet([['failed', 'auth', self::FAILED, self::FAILED, "Ligne un\nLigne deux\u{00A0}"]]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
+
+        $this->assertSame("Ligne un\nLigne deux\u{00A0}", $this->rows()[1][4]);
     }
 }
