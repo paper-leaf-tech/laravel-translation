@@ -101,8 +101,11 @@ class CheckCommand extends Command
                 $missing[] = [$group, $key, "Missing from {$locale}"];
             }
 
-            foreach (array_keys(array_diff_key($targetLines, $sourceLines)) as $key) {
-                $missing[] = [$group, $key, "Not in {$sourceLocale}"];
+            // A package's extra lines are never looked up, and the app cannot remove them.
+            if (! str_contains($group, '::')) {
+                foreach (array_keys(array_diff_key($targetLines, $sourceLines)) as $key) {
+                    $missing[] = [$group, $key, "Not in {$sourceLocale}"];
+                }
             }
 
             foreach (array_intersect_key($sourceLines, $targetLines) as $key => $line) {

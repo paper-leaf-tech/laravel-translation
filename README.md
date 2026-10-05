@@ -181,7 +181,7 @@ php artisan translations:check fr
 php artisan translations:check --allow-missing
 ```
 
-For each locale, the check reports keys missing from it, keys it has that the source lacks, and lines whose `:placeholders` differ from the source. It reads `lang/{locale}/**/*.php` (subdirectories included) and `lang/{locale}.json`. For any package with an override published under `lang/vendor/{package}/{locale}`, it also checks that package's lines, with the override merged over the package's own files the way Laravel loads them.
+For each locale, the check reports keys missing from it, keys it has that the source lacks, and lines whose `:placeholders` differ from the source. Extra keys are not reported for package lines, since packages sometimes ship stale keys the app cannot remove. It reads `lang/{locale}/**/*.php` (subdirectories included) and `lang/{locale}.json`. For any package with an override published under `lang/vendor/{package}/{locale}`, it also checks that package's lines, with the override merged over the package's own files the way Laravel loads them.
 
 It exits non-zero on any problem, so it can gate CI:
 

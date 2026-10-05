@@ -176,6 +176,21 @@ class CheckCommandTest extends TestCase
     }
 
     /** @test */
+    public function it_ignores_stale_keys_a_package_ships_only_in_the_target(): void
+    {
+        $this->app['translator']->addNamespace('demo', $this->packagePath);
+
+        // The package dropped `legacy` from its English but not its French; the app cannot fix that.
+        $this->writeLangFiles([
+            'en/messages.php' => ['saved' => 'Saved'],
+            'fr/messages.php' => ['saved' => 'Sauvegardé', 'legacy' => 'Ancien'],
+        ], $this->packagePath);
+        $this->writeLangFiles(['vendor/demo/fr/messages.php' => ['saved' => 'Enregistré']]);
+
+        $this->artisan('translations:check')->assertSuccessful();
+    }
+
+    /** @test */
     public function it_ignores_packages_without_an_override_for_the_locale(): void
     {
         $this->app['translator']->addNamespace('demo', $this->packagePath);
