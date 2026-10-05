@@ -198,6 +198,56 @@ class TranslationSheetTest extends TestCase
     }
 
     #[Test]
+    public function it_grows_a_small_grid_before_writing_and_reads_back_what_it_wrote(): void
+    {
+        $this->sheets->createSheetIfMissing('Translations');
+        $this->sheets->grids['Translations'] = [3, 4];
+
+        $rows = array_map(fn (int $n): SheetRow => new SheetRow('g', "k{$n}", "D{$n}", ['en' => "E{$n}", 'fr' => "F{$n}"], ['notes' => "n{$n}"]), range(1, 4));
+
+        $this->sheet->write(['key', 'group', 'default', 'en', 'fr', 'notes'], $rows);
+
+        $this->assertSame([5, 6], $this->sheets->grids['Translations']);
+        $this->assertSame([['appendDimension' => ['sheetId' => 1000, 'dimension' => 'ROWS', 'length' => 2]],
+            ['appendDimension' => ['sheetId' => 1000, 'dimension' => 'COLUMNS', 'length' => 2]]], $this->sheets->batches[0]);
+
+        $contents = $this->sheet->read('en', ['en', 'fr']);
+        $this->assertCount(4, $contents->rows);
+        $this->assertSame(['fr'], $contents->locales);
+        $this->assertSame(['notes'], $contents->extras);
+        $this->assertSame('F4', $contents->rows[3]->value('fr'));
+        $this->assertSame('n4', $contents->rows[3]->extras['notes']);
+    }
+
+    #[Test]
+    public function it_clears_leftovers_inside_a_grid_that_fits_exactly(): void
+    {
+        $this->sheets->seed('Translations', [
+            ['key', 'group', 'default', 'en', 'fr', 'old'],
+            ['a', 'g', 'A', 'A', 'x', 'y'],
+            ['b', 'g', 'B', 'B', 'x', 'y'],
+        ]);
+        $this->sheets->grids['Translations'] = [3, 6];
+
+        $this->sheet->write(['key', 'group', 'default', 'en'], [new SheetRow('g', 'a', 'A', ['en' => 'A'])]);
+
+        $this->assertSame([['key', 'group', 'default', 'en'], ['a', 'g', 'A', 'A']], $this->sheets->rows('Translations'));
+        $this->assertSame([3, 6], $this->sheets->grids['Translations']);
+        $this->assertSame([], $this->sheets->batches);
+    }
+
+    #[Test]
+    public function it_clears_nothing_when_the_write_fills_the_grid(): void
+    {
+        $this->sheets->createSheetIfMissing('Translations');
+        $this->sheets->grids['Translations'] = [2, 4];
+
+        $this->sheet->write(['key', 'group', 'default', 'en'], [new SheetRow('g', 'a', 'A', ['en' => 'A'])]);
+
+        $this->assertSame([['key', 'group', 'default', 'en'], ['a', 'g', 'A', 'A']], $this->sheets->rows('Translations'));
+    }
+
+    #[Test]
     #[DataProvider('columns')]
     public function it_converts_column_numbers_to_letters(int $number, string $letters): void
     {

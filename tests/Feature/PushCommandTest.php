@@ -225,6 +225,18 @@ class PushCommandTest extends TestCase
     }
 
     #[Test]
+    public function it_pushes_into_an_existing_tab_of_the_default_size_without_growing_it(): void
+    {
+        $this->seedSheet([['old', 'auth', 'Old', 'Old', 'Vieux']]);
+
+        $this->artisan('translations:push', ['--no-backup' => true])->assertSuccessful();
+
+        $this->assertSame([1000, 26], $this->sheets->grids['Translations']);
+        $this->assertSame([], $this->sheets->batches);
+        $this->assertCount(4, $this->rows());
+    }
+
+    #[Test]
     public function it_stops_when_a_required_column_is_missing(): void
     {
         $this->sheets->seed('Translations', [['key', 'group', 'en', 'fr'], ['failed', 'auth', 'x', 'y']]);

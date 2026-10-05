@@ -151,6 +151,29 @@ class GoogleSheetsService
     }
 
     /**
+     * Read every value in a sheet tab. The range is the bare tab name, which
+     * the API reads as the tab's used area, so it never exceeds the grid.
+     *
+     * @param  string  $sheetName  Name of the sheet tab
+     * @return array The values from the sheet
+     */
+    public function getSheetValues(string $sheetName): array
+    {
+        $this->ensureInitialized();
+
+        try {
+            $response = $this->service->spreadsheets_values->get(
+                $this->spreadsheetId,
+                "'".str_replace("'", "''", $sheetName)."'"
+            );
+
+            return $response->getValues() ?? [];
+        } catch (\Google\Service\Exception $e) {
+            $this->handleGoogleException($e);
+        }
+    }
+
+    /**
      * Write data to a specific range in a sheet tab.
      *
      * @param  string  $sheetName  Name of the sheet tab
@@ -204,9 +227,9 @@ class GoogleSheetsService
     }
 
     /**
-     * A tab's properties, conditional formats, protected ranges and filter,
-     * which formatting needs to replace its own rules. Null when the tab is
-     * missing.
+     * A tab's properties (including its grid size), conditional formats,
+     * protected ranges and filter, which writing and formatting need. Null
+     * when the tab is missing.
      */
     public function getSheet(string $sheetName): ?Sheet
     {
@@ -214,7 +237,7 @@ class GoogleSheetsService
 
         try {
             $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId, [
-                'fields' => 'sheets(properties(sheetId,title),conditionalFormats,protectedRanges(protectedRangeId,description),basicFilter)',
+                'fields' => 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),conditionalFormats,protectedRanges(protectedRangeId,description),basicFilter)',
             ]);
         } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);

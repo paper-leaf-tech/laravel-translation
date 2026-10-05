@@ -2,6 +2,11 @@
 
 namespace PaperleafTech\LaravelTranslation\Tests\Unit;
 
+use Google\Service\Sheets;
+use Google\Service\Sheets\Resource\Spreadsheets;
+use Google\Service\Sheets\Resource\SpreadsheetsValues;
+use Google\Service\Sheets\Spreadsheet;
+use Google\Service\Sheets\ValueRange;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
@@ -105,5 +110,46 @@ class GoogleSheetsServiceTest extends TestCase
             "'it''s'!A1:C",
             GoogleSheetsService::qualifyRange("it's", 'A1:C')
         );
+    }
+
+    /**
+     * Swap the API client for one whose resources are the given mocks.
+     */
+    private function withApi(?SpreadsheetsValues $values = null, ?Spreadsheets $spreadsheets = null): void
+    {
+        $api = $this->createStub(Sheets::class);
+        $api->spreadsheets_values = $values ?? $this->createStub(SpreadsheetsValues::class);
+        $api->spreadsheets = $spreadsheets ?? $this->createStub(Spreadsheets::class);
+
+        $set = fn (string $property, mixed $value) => (fn () => $this->{$property} = $value)->call($this->service);
+        $set('service', $api);
+        $set('spreadsheetId', 'test-spreadsheet-id');
+        $set('initialized', true);
+    }
+
+    #[Test]
+    public function it_reads_a_whole_tab_by_its_quoted_name(): void
+    {
+        $values = $this->createMock(SpreadsheetsValues::class);
+        $values->expects($this->once())->method('get')
+            ->with('test-spreadsheet-id', "'it''s'")
+            ->willReturn(new ValueRange(['values' => [['key', 'group']]]));
+        $this->withApi(values: $values);
+
+        $this->assertSame([['key', 'group']], $this->service->getSheetValues("it's"));
+    }
+
+    #[Test]
+    public function it_fetches_the_grid_size_with_a_tab(): void
+    {
+        $spreadsheets = $this->createMock(Spreadsheets::class);
+        $spreadsheets->expects($this->once())->method('get')
+            ->with('test-spreadsheet-id', $this->callback(fn (array $params): bool => str_contains($params['fields'], 'properties(sheetId,title,gridProperties(rowCount,columnCount))')))
+            ->willReturn(new Spreadsheet(['sheets' => [['properties' => ['sheetId' => 3, 'title' => 'Translations', 'gridProperties' => ['rowCount' => 1000, 'columnCount' => 26]]]]]));
+        $this->withApi(spreadsheets: $spreadsheets);
+
+        $grid = $this->service->getSheet('Translations')->getProperties()->getGridProperties();
+
+        $this->assertSame([1000, 26], [$grid->getRowCount(), $grid->getColumnCount()]);
     }
 }

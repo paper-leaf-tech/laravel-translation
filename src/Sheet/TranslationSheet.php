@@ -18,9 +18,6 @@ class TranslationSheet
 
     public const DEFAULT = 'default';
 
-    /** Wide enough for any tab this package writes. */
-    private const ALL = 'A1:ZZ';
-
     public function __construct(protected GoogleSheetsService $sheets) {}
 
     public function name(): string
@@ -50,7 +47,7 @@ class TranslationSheet
             return null;
         }
 
-        $grid = $this->sheets->getSheetData($this->name(), self::ALL);
+        $grid = $this->sheets->getSheetValues($this->name());
 
         if ($grid === []) {
             return new SheetContents;
@@ -130,12 +127,37 @@ class TranslationSheet
         }
 
         $this->sheets->createSheetIfMissing($name);
+
+        [$sheetId, $rowCount, $columnCount] = $this->grid($name);
+
+        // The API rejects ranges past the tab's grid (a new tab is 1000 x 26),
+        // so grow it first when the block is larger.
+        $growth = [];
+        foreach (['ROWS' => count($grid) - $rowCount, 'COLUMNS' => count($headers) - $columnCount] as $dimension => $missing) {
+            if ($missing > 0) {
+                $growth[] = ['appendDimension' => ['sheetId' => $sheetId, 'dimension' => $dimension, 'length' => $missing]];
+            }
+        }
+
+        if ($growth !== []) {
+            $this->sheets->batchUpdate($growth);
+            $rowCount = max($rowCount, count($grid));
+            $columnCount = max($columnCount, count($headers));
+        }
+
         $this->sheets->updateSheetData($name, 'A1', $grid);
 
         // Updating a range only overwrites the cells written, so rows and
         // columns left over from a larger previous push must be cleared.
-        $this->sheets->clearSheetData($name, 'A'.(count($grid) + 1).':ZZ');
-        $this->sheets->clearSheetData($name, self::column(count($headers) + 1).'1:ZZ');
+        $lastColumn = self::column($columnCount);
+
+        if (count($grid) < $rowCount) {
+            $this->sheets->clearSheetData($name, 'A'.(count($grid) + 1).':'.$lastColumn.$rowCount);
+        }
+
+        if (count($headers) < $columnCount) {
+            $this->sheets->clearSheetData($name, self::column(count($headers) + 1).'1:'.$lastColumn.$rowCount);
+        }
     }
 
     /**
@@ -152,6 +174,23 @@ class TranslationSheet
         }
 
         return $letters;
+    }
+
+    /**
+     * @return array{0: int, 1: int, 2: int} [sheetId, rowCount, columnCount]
+     */
+    protected function grid(string $name): array
+    {
+        $tab = $this->sheets->getSheet($name);
+
+        if ($tab === null) {
+            throw new RuntimeException("The \"{$name}\" tab could not be found after creating it.");
+        }
+
+        $properties = $tab->getProperties();
+        $grid = $properties->getGridProperties();
+
+        return [(int) $properties->getSheetId(), (int) $grid?->getRowCount(), (int) $grid?->getColumnCount()];
     }
 
     protected function cell(SheetRow $row, string $header): string
