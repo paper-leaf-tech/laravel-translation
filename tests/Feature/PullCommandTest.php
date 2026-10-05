@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\File;
 use Mockery;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class PullCommandTest extends TestCase
 {
@@ -24,7 +25,7 @@ class PullCommandTest extends TestCase
         parent::tearDown();
     }
 
-    /** @test */
+    #[Test]
     public function it_pulls_translations_from_sheet(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'
@@ -58,7 +59,7 @@ PHP);
         $this->assertSame('Too many attempts.', $translations['throttle']);
     }
 
-    /** @test */
+    #[Test]
     public function it_prioritizes_updated_value_over_original_for_source_locale(): void
     {
         File::put(lang_path('en/test.php'), <<<'PHP'
@@ -88,7 +89,7 @@ PHP);
         $this->assertSame('Updated', $translations['key']);
     }
 
-    /** @test */
+    #[Test]
     public function it_falls_back_to_original_when_updated_is_empty_for_source_locale(): void
     {
         File::put(lang_path('en/test.php'), <<<'PHP'
@@ -118,7 +119,7 @@ PHP);
         $this->assertSame('Original value here', $translations['key']);
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_rows_with_empty_translation_for_non_source_locale(): void
     {
         File::ensureDirectoryExists(lang_path('fr'));
@@ -152,7 +153,7 @@ PHP);
         $this->assertSame('leave-me-alone', $translations['throttle']);
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_nested_translations(): void
     {
         File::put(lang_path('en/validation.php'), <<<'PHP'
@@ -190,7 +191,7 @@ PHP);
         $this->assertSame('Invalid domain', $translations['email']['domain']);
     }
 
-    /** @test */
+    #[Test]
     public function it_shows_preview_in_dry_run_mode(): void
     {
         $sheetData = [
@@ -212,7 +213,7 @@ PHP);
         $this->assertFalse(File::exists(lang_path('en/auth.php')));
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_empty_sheet_gracefully(): void
     {
         $mock = Mockery::mock(GoogleSheetsService::class);
@@ -226,7 +227,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_locale_with_no_local_directory(): void
     {
         $sheetData = [
@@ -248,7 +249,7 @@ PHP);
         $this->assertFalse(File::isDirectory(lang_path('test')));
     }
 
-    /** @test */
+    #[Test]
     public function it_pulls_all_locales_when_no_arg_given(): void
     {
         File::ensureDirectoryExists(lang_path('fr'));
@@ -299,7 +300,7 @@ PHP);
         $this->assertSame('Échec', $fr['failed']);
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_locales_whose_sheet_tab_does_not_exist(): void
     {
         File::ensureDirectoryExists(lang_path('fr'));
@@ -328,7 +329,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_warns_when_no_local_locales_found_during_discovery(): void
     {
         File::deleteDirectory(lang_path('en'));
@@ -340,7 +341,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_comments_and_blank_lines_when_updating(): void
     {
         $original = <<<'PHP'
@@ -384,7 +385,7 @@ PHP;
         $this->assertStringContainsString("',\n\n    // Throttling", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_warns_about_new_keys_in_existing_files(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'
@@ -421,7 +422,7 @@ PHP);
         $this->assertStringNotContainsString('brand_new', $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_warns_when_local_file_is_missing(): void
     {
         $sheetData = [
@@ -443,7 +444,7 @@ PHP);
         $this->assertFalse(File::exists(lang_path('en/messages.php')));
     }
 
-    /** @test */
+    #[Test]
     public function it_pulls_into_files_in_subdirectories(): void
     {
         File::ensureDirectoryExists(lang_path('fr/resources'));
@@ -481,7 +482,7 @@ PHP);
         $this->assertFalse(File::exists(lang_path('fr/resources.php')));
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_rows_whose_placeholders_differ_from_the_source(): void
     {
         File::put(lang_path('en/access.php'), <<<'PHP'
@@ -525,7 +526,7 @@ PHP);
         $this->assertSame('', $translations['ended']);
     }
 
-    /** @test */
+    #[Test]
     public function it_does_not_touch_file_when_no_keys_match(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'
@@ -559,7 +560,7 @@ PHP);
         $this->assertSame($originalMtime, filemtime(lang_path('en/auth.php')));
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_double_quoted_string_when_updating(): void
     {
         File::put(lang_path('en/auth.php'), <<<'PHP'

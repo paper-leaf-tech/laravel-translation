@@ -4,6 +4,7 @@ namespace PaperleafTech\LaravelTranslation\Tests\Unit;
 
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class GoogleSheetsServiceTest extends TestCase
 {
@@ -12,10 +13,10 @@ class GoogleSheetsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new GoogleSheetsService();
+        $this->service = new GoogleSheetsService;
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_service_account_email(): void
     {
         $email = $this->service->getServiceAccountEmail();
@@ -24,7 +25,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->assertEquals('test@test-project.iam.gserviceaccount.com', $email);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_generate_spreadsheet_url(): void
     {
         $url = $this->service->getSpreadsheetUrl();
@@ -32,7 +33,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->assertEquals('https://docs.google.com/spreadsheets/d/test-spreadsheet-id/edit', $url);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_configuration_on_initialization(): void
     {
         config()->set('laravel-translation.spreadsheet_id', null);
@@ -43,7 +44,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->service->getSpreadsheetUrl();
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_credentials_file_exists(): void
     {
         config()->set('laravel-translation.credentials_path', '/non/existent/path.json');
@@ -54,7 +55,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->service->getSpreadsheetUrl();
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_credentials_json_format(): void
     {
         $invalidJsonPath = __DIR__.'/../fixtures/invalid.json';
@@ -71,7 +72,7 @@ class GoogleSheetsServiceTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_service_account_type(): void
     {
         $wrongTypePath = __DIR__.'/../fixtures/wrong-type.json';
@@ -88,7 +89,7 @@ class GoogleSheetsServiceTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_qualifies_ranges_with_sheet_name(): void
     {
         $this->assertSame(
@@ -97,7 +98,7 @@ class GoogleSheetsServiceTest extends TestCase
         );
     }
 
-    /** @test */
+    #[Test]
     public function it_escapes_single_quotes_inside_sheet_names(): void
     {
         $this->assertSame(

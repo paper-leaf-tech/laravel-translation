@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\File;
 use Mockery;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class PushCommandTest extends TestCase
 {
@@ -74,7 +75,7 @@ PHP);
         return $mock;
     }
 
-    /** @test */
+    #[Test]
     public function it_clears_leftover_rows_below_written_data(): void
     {
         $mock = $this->mockSheets();
@@ -98,7 +99,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_fails_when_translation_directory_does_not_exist(): void
     {
         $this->mockSheets();
@@ -108,7 +109,7 @@ PHP);
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_collects_translations_from_files(): void
     {
         $this->mockSheets();
@@ -118,7 +119,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_backup_when_no_backup_flag_is_used(): void
     {
         $mock = $this->mockSheets();
@@ -133,7 +134,7 @@ PHP);
         $this->assertFalse(File::isDirectory($this->backupPath()));
     }
 
-    /** @test */
+    #[Test]
     public function it_writes_local_backup_when_sheet_has_data(): void
     {
         $mock = $this->mockSheets();
@@ -155,7 +156,7 @@ PHP);
         $this->assertContains(['auth.failed', 'Old', 'Edited'], $payload['rows']);
     }
 
-    /** @test */
+    #[Test]
     public function it_creates_gitignore_in_backup_root_on_first_run(): void
     {
         $mock = $this->mockSheets();
@@ -172,7 +173,7 @@ PHP);
         $this->assertSame("*\n!.gitignore\n", File::get($gitignore));
     }
 
-    /** @test */
+    #[Test]
     public function it_creates_sheet_tab_named_with_prefix(): void
     {
         $mock = Mockery::mock(GoogleSheetsService::class);
@@ -190,7 +191,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_does_not_announce_when_sheet_already_exists(): void
     {
         $mock = $this->mockSheets();
@@ -201,7 +202,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_pushes_all_locales_when_no_arg_given(): void
     {
         $this->createFrenchTranslations();
@@ -244,7 +245,7 @@ PHP);
         $this->assertSame('Identifiants invalides.', $authFailed[2]);
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_vendor_and_dot_directories_when_discovering_locales(): void
     {
         File::ensureDirectoryExists(lang_path('vendor/some-package/en'));
@@ -266,7 +267,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_continues_after_per_locale_failure(): void
     {
         $this->createFrenchTranslations();
@@ -289,7 +290,7 @@ PHP);
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_pushes_source_locale_first(): void
     {
         $this->createFrenchTranslations();
@@ -315,7 +316,7 @@ PHP);
         $this->assertSame(['Translations - en', 'Translations - fr'], $order);
     }
 
-    /** @test */
+    #[Test]
     public function it_logs_review_count_when_english_source_changed_for_non_source_locale(): void
     {
         $this->createFrenchTranslations();
@@ -344,7 +345,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_backup_when_disabled_via_env(): void
     {
         config()->set('laravel-translation.backup.path', false);
@@ -362,7 +363,7 @@ PHP);
         $this->assertFalse(File::isDirectory($this->backupPath()));
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_backup_when_path_is_null(): void
     {
         config()->set('laravel-translation.backup.path', null);
@@ -378,7 +379,7 @@ PHP);
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_nested_translations(): void
     {
         File::put(lang_path('en/nested.php'), <<<'PHP'
