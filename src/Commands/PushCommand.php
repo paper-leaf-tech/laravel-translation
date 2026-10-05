@@ -166,6 +166,11 @@ class PushCommand extends Command
         $this->info('Writing to Google Sheets...');
         $this->sheetsService->updateSheetData($sheetName, $range, $rows);
 
+        // Updating a range only overwrites the cells written, so rows left over
+        // from a longer previous push (e.g. removed keys) must be cleared.
+        $nextRow = ($headerRow ?: 1) + count($rows);
+        $this->sheetsService->clearSheetData($sheetName, "{$keyColumn}{$nextRow}:{$updatedValueColumn}");
+
         $this->info("✓ Pushed {$locale}.");
         $this->info('View tab: '.$this->sheetsService->getSpreadsheetUrl($sheetName));
 

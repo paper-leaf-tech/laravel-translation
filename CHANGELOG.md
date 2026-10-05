@@ -4,8 +4,12 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-05
+
 ### Fixed
 - `translations:pull` now writes into translation files in subdirectories. Push flattens `lang/{locale}/resources/schools.php` into keys like `resources.schools.title`; pull previously looked for `resources.php` and skipped every row. Pull now picks the deepest existing file that matches the key.
+- `translations:push` now clears leftover rows below the data it writes. Previously, removing keys from code left the old trailing rows in the sheet as duplicates, and pull could apply those stale values over the live ones.
+- The published config no longer references `Google\Service\Sheets::SPREADSHEETS`. Apps that installed the package with `--dev` and published the config crashed on boot in production (`--no-dev`) because the class was missing. If you already published the config, replace that line in your `config/laravel-translation.php` with `'https://www.googleapis.com/auth/spreadsheets'`.
 
 ## [0.3.0] - 2026-05-08
 
@@ -82,7 +86,8 @@ All notable changes to `laravel-translation` will be documented in this file.
 - Keep original cell values
 - Added sheet backups
 
-[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/paper-leaf-tech/laravel-translation/compare/v0.0.14...v0.1.0

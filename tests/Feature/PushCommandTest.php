@@ -75,6 +75,30 @@ PHP);
     }
 
     /** @test */
+    public function it_clears_leftover_rows_below_written_data(): void
+    {
+        $mock = $this->mockSheets();
+        $mock->shouldReceive('getSheetData')->andReturn([
+            ['Key', 'Original Value', 'Updated Value'],
+            ['auth.failed', 'These credentials do not match our records.', ''],
+            ['auth.removed', 'Gone from code', ''],
+            ['auth.throttle', 'Too many login attempts.', ''],
+            ['validation.required', 'The :attribute field is required.', ''],
+            ['validation.email', 'The :attribute must be a valid email address.', ''],
+        ]);
+
+        // Header + 4 keys occupy rows 1-5; the old sixth row must be cleared.
+        $mock->shouldReceive('clearSheetData')
+            ->with('Translations - en', 'A6:C')
+            ->once()
+            ->andReturn(true);
+
+        $this->artisan('translations:push', ['lang' => 'en', '--no-backup' => true])
+            ->expectsOutputToContain('1 key(s) removed')
+            ->assertSuccessful();
+    }
+
+    /** @test */
     public function it_fails_when_translation_directory_does_not_exist(): void
     {
         $this->mockSheets();
@@ -152,6 +176,7 @@ PHP);
     public function it_creates_sheet_tab_named_with_prefix(): void
     {
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->once()->with('Translations - en')->andReturn(true);
         $mock->shouldReceive('getSheetData')->andReturn([]);
         $mock->shouldReceive('updateSheetData')->andReturn(true);
@@ -183,12 +208,14 @@ PHP);
 
         $captured = [];
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->with('Translations - en')->once()->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->with('Translations - fr')->once()->andReturn(true);
         $mock->shouldReceive('getSheetData')->andReturn([]);
         $mock->shouldReceive('updateSheetData')
             ->andReturnUsing(function ($sheet, $range, $rows) use (&$captured) {
                 $captured[$sheet] = $rows;
+
                 return true;
             });
         $mock->shouldReceive('getSheetId')->andReturn(123);
@@ -224,6 +251,7 @@ PHP);
         File::ensureDirectoryExists(lang_path('.cache'));
 
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldNotReceive('createSheetIfMissing')->with('Translations - vendor');
         $mock->shouldNotReceive('createSheetIfMissing')->with('Translations - .cache');
         $mock->shouldReceive('createSheetIfMissing')->with('Translations - en')->andReturn(false);
@@ -244,6 +272,7 @@ PHP);
         $this->createFrenchTranslations();
 
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->andReturn(false);
         $mock->shouldReceive('getSheetData')->andReturn([]);
         $mock->shouldReceive('getSheetId')->andReturn(123);
@@ -267,8 +296,10 @@ PHP);
 
         $order = [];
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->andReturnUsing(function ($name) use (&$order) {
             $order[] = $name;
+
             return false;
         });
         $mock->shouldReceive('getSheetData')->andReturn([]);
@@ -290,6 +321,7 @@ PHP);
         $this->createFrenchTranslations();
 
         $mock = Mockery::mock(GoogleSheetsService::class);
+        $mock->shouldReceive('clearSheetData')->andReturn(true);
         $mock->shouldReceive('createSheetIfMissing')->andReturn(false);
         $mock->shouldReceive('getSheetData')->andReturnUsing(function ($sheet, $range) {
             if ($sheet === 'Translations - fr') {
@@ -298,6 +330,7 @@ PHP);
                     ['auth.failed', 'OUTDATED ENGLISH', 'Identifiants invalides.'],
                 ];
             }
+
             return [];
         });
         $mock->shouldReceive('updateSheetData')->andReturn(true);

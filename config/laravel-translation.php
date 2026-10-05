@@ -36,7 +36,9 @@ return [
     |
     */
     'scopes' => [
-        Google\Service\Sheets::SPREADSHEETS,
+        // Google\Service\Sheets::SPREADSHEETS; a literal so a published config
+        // doesn't fatal when the package is installed as a dev dependency.
+        'https://www.googleapis.com/auth/spreadsheets',
     ],
 
     /*
