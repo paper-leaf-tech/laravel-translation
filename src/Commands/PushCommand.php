@@ -71,8 +71,6 @@ class PushCommand extends Command
                 $localeHeaders = array_values(array_filter($result->headers, fn (string $header): bool => in_array($header, $locales, true)));
                 $sheets->batchUpdate($formatter->requests($tab, $result->headers, $localeHeaders));
             }
-
-            event(new TranslationsPushed($sheet->name(), (int) $sheets->getSheetId($sheet->name()), $result->headers, $result->rows));
         } catch (RuntimeException $e) {
             $this->error($e->getMessage());
 
@@ -81,6 +79,10 @@ class PushCommand extends Command
 
         $this->info('✓ Pushed '.count($result->rows).' row(s) to "'.$sheet->name().'".');
         $this->info('View sheet: '.$sheet->url());
+
+        // Outside the try, so a listener's exception surfaces as itself rather
+        // than being reported as a failed push after the sheet was written.
+        event(new TranslationsPushed($sheet->name(), (int) $sheets->getSheetId($sheet->name()), $result->headers, $result->rows));
 
         return self::SUCCESS;
     }

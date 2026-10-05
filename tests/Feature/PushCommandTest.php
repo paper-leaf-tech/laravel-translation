@@ -2,12 +2,15 @@
 
 namespace PaperleafTech\LaravelTranslation\Tests\Feature;
 
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Events\TranslationsPushed;
 use PaperleafTech\LaravelTranslation\Tests\Support\FakeGoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 class PushCommandTest extends TestCase
 {
@@ -261,6 +264,27 @@ class PushCommandTest extends TestCase
             && $event->sheetId === 1000
             && $event->headers === self::HEADER
             && count($event->rows) === 3);
+    }
+
+    #[Test]
+    public function a_failing_listener_does_not_mask_a_successful_push(): void
+    {
+        Event::listen(TranslationsPushed::class, fn () => throw new RuntimeException('Listener broke.'));
+        $output = new BufferedOutput;
+        $thrown = null;
+
+        try {
+            Artisan::call('translations:push', [], $output);
+        } catch (RuntimeException $e) {
+            $thrown = $e->getMessage();
+        }
+
+        $this->assertSame('Listener broke.', $thrown, 'The listener exception should propagate as itself.');
+
+        $printed = $output->fetch();
+        $this->assertStringContainsString('✓ Pushed 3 row(s) to "Translations".', $printed);
+        $this->assertStringContainsString('View sheet: ', $printed);
+        $this->assertCount(4, $this->rows());
     }
 
     #[Test]
