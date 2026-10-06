@@ -5,6 +5,7 @@ namespace PaperleafTech\LaravelTranslation\Tests\Unit;
 use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Services\TranslationFileWriter;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class TranslationFileWriterTest extends TestCase
 {
@@ -15,7 +16,7 @@ class TranslationFileWriterTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->writer = new TranslationFileWriter();
+        $this->writer = new TranslationFileWriter;
         $this->tmpDir = sys_get_temp_dir().DIRECTORY_SEPARATOR.'lt-writer-'.uniqid();
         File::makeDirectory($this->tmpDir, 0755, true);
     }
@@ -36,7 +37,7 @@ class TranslationFileWriterTest extends TestCase
         return $path;
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_inline_comments(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -57,7 +58,7 @@ PHP);
         $this->assertStringContainsString("'failed' => 'Invalid credentials.'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_block_and_doc_comments(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -80,7 +81,7 @@ PHP);
         $this->assertStringContainsString("'failed' => 'Y'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_blank_lines(): void
     {
         $original = <<<'PHP'
@@ -104,7 +105,7 @@ PHP;
         $this->assertStringContainsString("'throttle' => 'Y',\n\n\n    'logout'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_two_space_indentation(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -123,7 +124,7 @@ PHP);
         $this->assertStringContainsString("  'throttle' => 'Y'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_single_quoted_strings(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -139,7 +140,7 @@ PHP);
         $this->assertStringContainsString("'failed' => 'new'", File::get($path));
     }
 
-    /** @test */
+    #[Test]
     public function it_preserves_double_quoted_strings(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -157,7 +158,7 @@ PHP);
         $this->assertStringContainsString('"greeting" => "It\'s a new day"', $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_escapes_apostrophe_when_target_is_single_quoted(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -174,7 +175,7 @@ PHP);
         $this->assertStringContainsString("'failed' => 'It\\'s broken'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_nested_arrays(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -199,7 +200,7 @@ PHP);
         $this->assertStringContainsString("'domain' => 'old domain'", $contents);
     }
 
-    /** @test */
+    #[Test]
     public function it_does_not_modify_file_when_no_updates_apply(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -224,7 +225,7 @@ PHP);
         $this->assertEmpty($stats['updated']);
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_keys_with_non_string_values(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -253,7 +254,7 @@ PHP);
         $this->assertEmpty($stats['skipped_missing']);
     }
 
-    /** @test */
+    #[Test]
     public function it_reports_truly_absent_keys_as_skipped_missing(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -273,7 +274,7 @@ PHP);
         $this->assertSame(['new_key'], $stats['skipped_missing']);
     }
 
-    /** @test */
+    #[Test]
     public function it_returns_skipped_missing_for_all_updates_when_file_does_not_exist(): void
     {
         $stats = $this->writer->updateFile($this->tmpDir.'/missing.php', [
@@ -285,7 +286,7 @@ PHP);
         $this->assertEmpty($stats['updated']);
     }
 
-    /** @test */
+    #[Test]
     public function it_skips_when_file_does_not_return_an_array(): void
     {
         $path = $this->fixture(<<<'PHP'
@@ -300,7 +301,7 @@ PHP);
         $this->assertEmpty($stats['updated']);
     }
 
-    /** @test */
+    #[Test]
     public function it_reports_non_string_when_descending_into_non_array_parent(): void
     {
         $path = $this->fixture(<<<'PHP'

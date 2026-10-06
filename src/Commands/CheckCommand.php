@@ -34,7 +34,7 @@ class CheckCommand extends Command
 
     public function handle(): int
     {
-        $source = TranslationConventions::SOURCE_LOCALE;
+        $source = TranslationConventions::sourceLocale();
         $lang = $this->argument('lang');
 
         $locales = $lang
@@ -84,7 +84,7 @@ class CheckCommand extends Command
 
     protected function checkLocale(string $locale): bool
     {
-        $sourceLocale = TranslationConventions::SOURCE_LOCALE;
+        $sourceLocale = TranslationConventions::sourceLocale();
         $namespaces = $this->catalogue->vendorNamespaces($locale);
 
         $source = $this->catalogue->lines($sourceLocale, $namespaces);

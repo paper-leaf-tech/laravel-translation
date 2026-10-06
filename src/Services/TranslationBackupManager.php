@@ -26,37 +26,26 @@ class TranslationBackupManager
             : storage_path($configured);
     }
 
-    public function localePath(string $locale): string
-    {
-        return $this->path().DIRECTORY_SEPARATOR.$locale;
-    }
-
     /**
-     * Persist a JSON snapshot of sheet rows for a locale.
-     * Returns the absolute file path written, or null if backups are disabled.
+     * Save the sheet's cells as JSON before a push overwrites them.
+     * Returns the file written, or null when backups are disabled.
+     *
+     * @param  list<list<string>>  $rows
      */
-    public function backup(string $locale, array $rows): ?string
+    public function backup(array $rows): ?string
     {
         if (! $this->isEnabled()) {
             return null;
         }
 
         $root = $this->path();
-        if (! File::isDirectory($root)) {
-            File::makeDirectory($root, 0755, true);
-        }
+        File::ensureDirectoryExists($root);
         $this->ensureGitignore($root);
 
-        $localeDir = $this->localePath($locale);
-        if (! File::isDirectory($localeDir)) {
-            File::makeDirectory($localeDir, 0755, true);
-        }
-
-        $timestamp = date('Y-m-d_His');
-        $filePath = $localeDir.DIRECTORY_SEPARATOR.$timestamp.'.json';
+        $filePath = $root.DIRECTORY_SEPARATOR.date('Y-m-d_His').'.json';
 
         File::put($filePath, json_encode([
-            'locale' => $locale,
+            'sheet' => config('laravel-translation.sheet', 'Translations'),
             'created_at' => date(\DateTimeInterface::ATOM),
             'rows' => $rows,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -65,30 +54,24 @@ class TranslationBackupManager
     }
 
     /**
-     * Keep N most recent backups for the locale (by mtime); delete older ones.
-     * Returns count deleted. Returns 0 when backups are disabled.
+     * Keep the $keep newest backups (by mtime) and delete the rest. Per-locale
+     * folders left by 0.4 are not touched. Returns how many were deleted.
      */
-    public function prune(string $locale, int $keep): int
+    public function prune(int $keep): int
     {
         if ($keep < 0) {
             throw new \InvalidArgumentException('Keep count must be a non-negative integer');
         }
 
-        if (! $this->isEnabled()) {
+        if (! $this->isEnabled() || ! File::isDirectory($this->path())) {
             return 0;
         }
 
-        $localeDir = $this->localePath($locale);
-        if (! File::isDirectory($localeDir)) {
-            return 0;
-        }
-
-        $files = collect(File::files($localeDir))
-            ->filter(fn ($f) => $f->getExtension() === 'json')
-            ->sortByDesc(fn ($f) => $f->getMTime())
-            ->values();
-
-        $toDelete = $files->slice($keep);
+        $toDelete = collect(File::files($this->path()))
+            ->filter(fn ($file) => $file->getExtension() === 'json')
+            ->sortByDesc(fn ($file) => $file->getMTime())
+            ->values()
+            ->slice($keep);
 
         foreach ($toDelete as $file) {
             File::delete($file->getPathname());

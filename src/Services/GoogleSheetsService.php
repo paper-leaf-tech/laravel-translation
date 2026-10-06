@@ -4,6 +4,8 @@ namespace PaperleafTech\LaravelTranslation\Services;
 
 use Google\Client;
 use Google\Service\Sheets;
+use Google\Service\Sheets\BatchUpdateSpreadsheetRequest;
+use Google\Service\Sheets\Sheet;
 use Google\Service\Sheets\Spreadsheet;
 use Google\Service\Sheets\ValueRange;
 use Illuminate\Support\Facades\File;
@@ -149,6 +151,29 @@ class GoogleSheetsService
     }
 
     /**
+     * Read every value in a sheet tab. The range is the bare tab name, which
+     * the API reads as the tab's used area, so it never exceeds the grid.
+     *
+     * @param  string  $sheetName  Name of the sheet tab
+     * @return array The values from the sheet
+     */
+    public function getSheetValues(string $sheetName): array
+    {
+        $this->ensureInitialized();
+
+        try {
+            $response = $this->service->spreadsheets_values->get(
+                $this->spreadsheetId,
+                "'".str_replace("'", "''", $sheetName)."'"
+            );
+
+            return $response->getValues() ?? [];
+        } catch (\Google\Service\Exception $e) {
+            $this->handleGoogleException($e);
+        }
+    }
+
+    /**
      * Write data to a specific range in a sheet tab.
      *
      * @param  string  $sheetName  Name of the sheet tab
@@ -196,6 +221,55 @@ class GoogleSheetsService
             );
 
             return true;
+        } catch (\Google\Service\Exception $e) {
+            $this->handleGoogleException($e);
+        }
+    }
+
+    /**
+     * A tab's properties (including its grid size), conditional formats,
+     * protected ranges and filter, which writing and formatting need. Null
+     * when the tab is missing.
+     */
+    public function getSheet(string $sheetName): ?Sheet
+    {
+        $this->ensureInitialized();
+
+        try {
+            $spreadsheet = $this->service->spreadsheets->get($this->spreadsheetId, [
+                'fields' => 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),conditionalFormats,protectedRanges(protectedRangeId,description),basicFilter)',
+            ]);
+        } catch (\Google\Service\Exception $e) {
+            $this->handleGoogleException($e);
+        }
+
+        foreach ($spreadsheet->getSheets() as $sheet) {
+            if ($sheet->getProperties()->getTitle() === $sheetName) {
+                return $sheet;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Apply Sheets API requests (formatting, protection, filters) in one call.
+     *
+     * @param  list<array<string, mixed>>  $requests
+     */
+    public function batchUpdate(array $requests): void
+    {
+        if ($requests === []) {
+            return;
+        }
+
+        $this->ensureInitialized();
+
+        try {
+            $this->service->spreadsheets->batchUpdate(
+                $this->spreadsheetId,
+                new BatchUpdateSpreadsheetRequest(['requests' => $requests]),
+            );
         } catch (\Google\Service\Exception $e) {
             $this->handleGoogleException($e);
         }

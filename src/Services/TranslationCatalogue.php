@@ -5,6 +5,8 @@ namespace PaperleafTech\LaravelTranslation\Services;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\File;
 use Illuminate\Translation\Translator;
+use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
+use RuntimeException;
 use Symfony\Component\Finder\SplFileInfo;
 
 /**
@@ -30,10 +32,11 @@ class TranslationCatalogue
      */
     public function lines(string $locale, array $vendorNamespaces = []): array
     {
-        $groups = array_map(fn (array $contents): array => $this->flatten($contents), $this->readDirectory(lang_path($locale)));
+        $groups = $this->appGroups($locale);
 
-        if (File::exists($json = lang_path("{$locale}.json"))) {
-            $groups[self::JSON_GROUP] = $this->flatten(File::json($json) ?? [], dotted: false);
+        $json = $this->jsonLines($locale);
+        if ($json !== null) {
+            $groups[self::JSON_GROUP] = $json;
         }
 
         foreach ($vendorNamespaces as $namespace) {
@@ -45,6 +48,64 @@ class TranslationCatalogue
         ksort($groups, SORT_STRING);
 
         return $groups;
+    }
+
+    /**
+     * The app's own PHP files: what push and pull sync to the sheet.
+     *
+     * @return array<string, array<string, string>> group => [dotted key => line], both sorted
+     */
+    public function appGroups(string $locale): array
+    {
+        $groups = array_map(fn (array $contents): array => $this->flatten($contents), $this->readDirectory(lang_path($locale)));
+        ksort($groups, SORT_STRING);
+
+        return $groups;
+    }
+
+    /**
+     * lang/{locale}.json. Laravel renders a JSON key that has no source-locale
+     * line as the key itself, so without lang/{source}.json the source lines
+     * are the other locales' keys mapped to themselves.
+     *
+     * @return array<string, string>|null null when the locale has no JSON lines
+     */
+    protected function jsonLines(string $locale): ?array
+    {
+        $path = lang_path("{$locale}.json");
+
+        if (File::exists($path)) {
+            return $this->flatten($this->readJson($path), dotted: false);
+        }
+
+        if (! TranslationConventions::isSourceLocale($locale)) {
+            return null;
+        }
+
+        $keys = [];
+        foreach (File::glob(lang_path('*.json')) as $other) {
+            foreach (array_keys($this->readJson($other)) as $key) {
+                $keys[(string) $key] = (string) $key;
+            }
+        }
+
+        return $keys === [] ? null : $this->flatten($keys, dotted: false);
+    }
+
+    /**
+     * @return array<array-key, mixed>
+     */
+    protected function readJson(string $path): array
+    {
+        $decoded = json_decode(File::get($path), true);
+
+        if (! is_array($decoded)) {
+            $reason = json_last_error() === JSON_ERROR_NONE ? 'expected a JSON object' : json_last_error_msg();
+
+            throw new RuntimeException("Could not read {$path}: {$reason}.");
+        }
+
+        return $decoded;
     }
 
     /**

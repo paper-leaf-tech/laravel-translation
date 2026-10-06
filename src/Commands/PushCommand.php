@@ -3,212 +3,105 @@
 namespace PaperleafTech\LaravelTranslation\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Concerns\DiscoversLocales;
+use PaperleafTech\LaravelTranslation\Events\TranslationsPushed;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Services\TranslationBackupManager;
-use PaperleafTech\LaravelTranslation\Services\TranslationReconciler;
+use PaperleafTech\LaravelTranslation\Services\TranslationCatalogue;
+use PaperleafTech\LaravelTranslation\Sheet\ReconcileReport;
+use PaperleafTech\LaravelTranslation\Sheet\SheetContents;
+use PaperleafTech\LaravelTranslation\Sheet\SheetFormatter;
+use PaperleafTech\LaravelTranslation\Sheet\SheetReconciler;
+use PaperleafTech\LaravelTranslation\Sheet\TranslationSheet;
 use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
+use RuntimeException;
 
 class PushCommand extends Command
 {
     use DiscoversLocales;
 
-    protected $signature = 'translations:push {lang? : Locale to push (omit to push all locales found under lang/)}
-        {--clear : Clear existing sheet data before push}
-        {--force-initial : Treat as initial push, leaving Updated Value empty}
-        {--no-backup : Skip creating a local backup of the sheet before pushing}';
+    protected $signature = 'translations:push
+        {--dry-run : Show what would change without writing to the sheet}
+        {--no-backup : Skip the local backup of the sheet}
+        {--fresh : Rebuild the sheet from code, ignoring its current contents}';
 
-    protected $description = 'Push codebase translations to a connected Google Sheet (one tab per locale).';
+    protected $description = 'Push every locale\'s translations to the translation sheet.';
 
-    /** @var array<string,string>|null Cached source-locale flat translations. */
-    protected ?array $sourceTranslations = null;
+    public function handle(
+        TranslationCatalogue $catalogue,
+        TranslationSheet $sheet,
+        SheetReconciler $reconciler,
+        TranslationBackupManager $backups,
+        SheetFormatter $formatter,
+        GoogleSheetsService $sheets,
+    ): int {
+        $source = TranslationConventions::sourceLocale();
+        $locales = $this->discoverLocales();
 
-    /** @var bool Whether the "backups disabled" notice has been shown this run. */
-    protected bool $backupNoticeShown = false;
-
-    public function __construct(
-        protected GoogleSheetsService $sheetsService,
-        protected TranslationBackupManager $backups,
-        protected TranslationReconciler $reconciler,
-    ) {
-        parent::__construct();
-    }
-
-    public function handle(): int
-    {
-        $lang = $this->argument('lang');
-        $locales = $lang ? [$lang] : $this->discoverLocales();
-
-        if (empty($locales)) {
-            $this->warn('No locales found under '.lang_path().'. Nothing to push.');
-
-            return self::SUCCESS;
-        }
-
-        // Push the source locale first so its translations are cached for non-source pushes.
-        usort($locales, fn ($a, $b) => (TranslationConventions::isSourceLocale($a) ? 0 : 1)
-            <=> (TranslationConventions::isSourceLocale($b) ? 0 : 1));
-
-        $failures = [];
-
-        foreach ($locales as $locale) {
-            try {
-                $ok = $this->pushLocale($locale);
-                if (! $ok) {
-                    $failures[] = $locale;
-                }
-            } catch (\Exception $e) {
-                $this->error("[{$locale}] Push failed: ".$e->getMessage());
-                $failures[] = $locale;
-            }
-        }
-
-        if (! empty($failures)) {
-            $this->error('Failed locales: '.implode(', ', $failures));
+        if (! in_array($source, $locales, true)) {
+            $this->error('No '.lang_path($source).' directory. Push needs the source locale.');
 
             return self::FAILURE;
         }
 
+        try {
+            $existing = $sheet->read($source, $locales);
+
+            $code = [];
+            foreach ($locales as $locale) {
+                $code[$locale] = $catalogue->appGroups($locale);
+            }
+
+            if ($existing !== null && $existing->rows !== [] && ! $this->option('no-backup') && ! $this->option('dry-run')) {
+                $this->backup($backups, $existing);
+            }
+
+            $result = $reconciler->reconcile($source, $code, $this->option('fresh') ? null : $existing);
+            $this->report($result->report, count($result->rows), $source);
+
+            if ($this->option('dry-run')) {
+                $this->info('Dry run: the sheet was not changed.');
+
+                return self::SUCCESS;
+            }
+
+            $sheet->write($result->headers, $result->rows);
+
+            if (config('laravel-translation.format', true) && ($tab = $sheets->getSheet($sheet->name())) !== null) {
+                $localeHeaders = array_values(array_filter($result->headers, fn (string $header): bool => in_array($header, $locales, true)));
+                $sheets->batchUpdate($formatter->requests($tab, $result->headers, $localeHeaders));
+            }
+        } catch (RuntimeException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $this->info('✓ Pushed '.count($result->rows).' row(s) to "'.$sheet->name().'".');
+        $this->info('View sheet: '.$sheet->url());
+
+        // Outside the try, so a listener's exception surfaces as itself rather
+        // than being reported as a failed push after the sheet was written.
+        event(new TranslationsPushed($sheet->name(), (int) $sheets->getSheetId($sheet->name()), $result->headers, $result->rows));
+
         return self::SUCCESS;
     }
 
-    protected function pushLocale(string $locale): bool
+    protected function backup(TranslationBackupManager $backups, SheetContents $existing): void
     {
-        $this->info('');
-        $this->info("=== {$locale} ===");
+        if (! $backups->isEnabled()) {
+            $this->info('Backups disabled via TRANSLATION_BACKUP_PATH.');
 
-        $langPath = lang_path($locale);
-        if (! File::isDirectory($langPath)) {
-            $this->error("Translation directory not found: {$langPath}");
-
-            return false;
+            return;
         }
 
-        $sheetName = TranslationConventions::sheetNameFor($locale);
-
-        $targetTranslations = $this->collectTranslations($langPath);
-
-        if (TranslationConventions::isSourceLocale($locale)) {
-            $this->sourceTranslations = $targetTranslations;
-        } elseif ($this->sourceTranslations === null) {
-            $this->sourceTranslations = $this->loadSourceTranslations();
-        }
-
-        if (empty($targetTranslations) && empty($this->sourceTranslations)) {
-            $this->warn('No translations found to push.');
-
-            return true;
-        }
-
-        if ($this->sheetsService->createSheetIfMissing($sheetName)) {
-            $this->info("Created new sheet tab: {$sheetName}");
-        }
-
-        $isSheetEmpty = $this->isSheetEmpty($sheetName);
-
-        // Backup
-        if (! $this->option('no-backup')) {
-            if (! $this->backups->isEnabled()) {
-                if (! $this->backupNoticeShown) {
-                    $this->info('Backups disabled via TRANSLATION_BACKUP_PATH.');
-                    $this->backupNoticeShown = true;
-                }
-            } elseif (! $isSheetEmpty) {
-                $this->writeBackup($locale, $sheetName);
-            }
-        }
-
-        // Clear if requested
-        if ($this->option('clear')) {
-            $this->info('Clearing existing sheet data...');
-            $keyColumn = config('laravel-translation.key_column', 'A');
-            $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-            $this->sheetsService->clearSheetData($sheetName, "{$keyColumn}:{$updatedValueColumn}");
-        }
-
-        $forceInitial = $this->option('force-initial') || $this->option('clear');
-        $isInitial = $forceInitial || $isSheetEmpty;
-
-        $existingSheetRows = $isInitial ? [] : $this->readExistingSheetData($sheetName);
-
-        $this->info('Found '.count($targetTranslations).' translation key(s) in code.');
-
-        if ($isInitial) {
-            $this->info('Performing initial push...');
-        } else {
-            $this->info('Reconciling against existing sheet data...');
-        }
-
-        $result = $this->reconciler->reconcile(
-            $locale,
-            $this->sourceTranslations ?? [],
-            $targetTranslations,
-            $existingSheetRows,
-        );
-
-        $rows = $result['rows'];
-        $stats = $result['stats'];
-
-        $this->reportStats($locale, $stats);
-
-        // Prepend header row if configured
-        if (config('laravel-translation.header_row')) {
-            array_unshift($rows, TranslationConventions::headersFor($locale));
-        }
-
-        $keyColumn = config('laravel-translation.key_column', 'A');
-        $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-        $headerRow = config('laravel-translation.header_row', 1);
-
-        $range = "{$keyColumn}{$headerRow}:{$updatedValueColumn}";
-
-        $this->info('Writing to Google Sheets...');
-        $this->sheetsService->updateSheetData($sheetName, $range, $rows);
-
-        // Updating a range only overwrites the cells written, so rows left over
-        // from a longer previous push (e.g. removed keys) must be cleared.
-        $nextRow = ($headerRow ?: 1) + count($rows);
-        $this->sheetsService->clearSheetData($sheetName, "{$keyColumn}{$nextRow}:{$updatedValueColumn}");
-
-        $this->info("✓ Pushed {$locale}.");
-        $this->info('View tab: '.$this->sheetsService->getSpreadsheetUrl($sheetName));
-
-        return true;
-    }
-
-    protected function loadSourceTranslations(): array
-    {
-        $sourceLangPath = lang_path(TranslationConventions::SOURCE_LOCALE);
-        if (! File::isDirectory($sourceLangPath)) {
-            return [];
-        }
-
-        return $this->collectTranslations($sourceLangPath);
-    }
-
-    protected function writeBackup(string $locale, string $sheetName): void
-    {
         try {
-            $keyColumn = config('laravel-translation.key_column', 'A');
-            $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-            $headerRow = config('laravel-translation.header_row', 1);
-
-            $existingRows = $this->sheetsService->getSheetData(
-                $sheetName,
-                "{$keyColumn}{$headerRow}:{$updatedValueColumn}"
-            );
-
-            if (empty($existingRows)) {
-                return;
-            }
-
-            $path = $this->backups->backup($locale, $existingRows);
-            $this->info("✓ Backup saved: {$path}");
+            $this->info('✓ Backup saved: '.$backups->backup($existing->grid));
 
             if (config('laravel-translation.backup.auto_prune', true)) {
                 $keep = (int) config('laravel-translation.backup.keep', 5);
-                $deleted = $this->backups->prune($locale, $keep);
+                $deleted = $backups->prune($keep);
+
                 if ($deleted > 0) {
                     $this->info("  Pruned {$deleted} old backup(s) (keeping {$keep} most recent)");
                 }
@@ -219,154 +112,42 @@ class PushCommand extends Command
         }
     }
 
-    protected function reportStats(string $locale, array $stats): void
+    protected function report(ReconcileReport $report, int $rows, string $source): void
     {
-        if ($stats['new'] > 0) {
-            $this->line("  - {$stats['new']} new key(s) added");
-        }
-        if ($stats['removed'] > 0) {
-            $this->line("  - {$stats['removed']} key(s) removed");
-        }
-        if ($stats['changed'] > 0) {
-            $this->line("  - {$stats['changed']} key(s) updated");
-        }
-        if ($stats['unchanged'] > 0) {
-            $this->line("  - {$stats['unchanged']} key(s) unchanged");
+        $this->info("{$rows} key(s) in code.");
+
+        if ($report->new !== []) {
+            $this->line('  - '.count($report->new).' new key(s) added');
         }
 
-        if (! TranslationConventions::isSourceLocale($locale)) {
-            if ($stats['stale'] > 0) {
-                $this->warn("  - {$stats['stale']} key(s) had their English source change; review translations");
-            }
-            if ($stats['untranslated'] > 0) {
-                $this->line("  - {$stats['untranslated']} new key(s) need translation");
-            }
-            if ($stats['target_only'] > 0) {
-                $this->line("  - {$stats['target_only']} key(s) exist in {$locale} but not in source locale");
-            }
+        if ($report->sourceChanged !== []) {
+            $this->line('  - '.count($report->sourceChanged)." key(s) had their {$source} text changed in code");
         }
+
+        if ($report->filledFromCode > 0) {
+            $this->line("  - {$report->filledFromCode} empty cell(s) filled from code");
+        }
+
+        $this->listed('key(s) were removed from code; their rows were dropped (notes survive in the backup)', $report->removed);
+        $this->listed("key(s) changed in both code and the sheet; kept the sheet's {$source} text", $report->conflicts);
+        $this->listed("key(s) need their translations reviewed: the {$source} text changed", $report->needsReview);
+        $this->listed("key(s) exist in other locales but not in {$source}", $report->sourceMissing);
+        $this->listed('duplicate row(s) in the sheet were dropped; the first of each was kept', $report->duplicates);
     }
 
     /**
-     * Collect translations from PHP files under a language directory.
-     * Returns flat key=>value map using dot notation.
-     *
-     * @return array<string,string>
+     * @param  list<string>  $labels
      */
-    protected function collectTranslations(string $langPath, string $prefix = ''): array
+    protected function listed(string $message, array $labels): void
     {
-        $translations = [];
-
-        $files = File::files($langPath);
-
-        foreach ($files as $file) {
-            if ($file->getExtension() !== 'php') {
-                continue;
-            }
-
-            $filename = $file->getFilenameWithoutExtension();
-            $fileTranslations = require $file->getPathname();
-
-            if (! is_array($fileTranslations)) {
-                continue;
-            }
-
-            foreach ($fileTranslations as $key => $value) {
-                $fullKey = $prefix ? "{$prefix}.{$filename}.{$key}" : "{$filename}.{$key}";
-
-                if (is_array($value)) {
-                    $translations = array_merge(
-                        $translations,
-                        $this->flattenTranslations($value, $fullKey)
-                    );
-                } else {
-                    $translations[$fullKey] = $value;
-                }
-            }
+        if ($labels === []) {
+            return;
         }
 
-        $directories = File::directories($langPath);
-        foreach ($directories as $directory) {
-            $dirName = basename($directory);
-            $nestedPrefix = $prefix ? "{$prefix}.{$dirName}" : $dirName;
-            $translations = array_merge(
-                $translations,
-                $this->collectTranslations($directory, $nestedPrefix)
-            );
+        $this->warn('  ⚠ '.count($labels).' '.$message.':');
+
+        foreach ($labels as $label) {
+            $this->line("      - {$label}");
         }
-
-        return $translations;
-    }
-
-    /**
-     * Flatten nested translation arrays into dot-notation keys.
-     */
-    protected function flattenTranslations(array $translations, string $prefix): array
-    {
-        $flattened = [];
-
-        foreach ($translations as $key => $value) {
-            $fullKey = "{$prefix}.{$key}";
-
-            if (is_array($value)) {
-                $flattened = array_merge(
-                    $flattened,
-                    $this->flattenTranslations($value, $fullKey)
-                );
-            } else {
-                $flattened[$fullKey] = $value;
-            }
-        }
-
-        return $flattened;
-    }
-
-    /**
-     * Sheet is empty if it has no data rows beyond a header row.
-     * Only catches the "tab not found" / range-not-parseable cases; other
-     * exceptions propagate so we don't silently mask permissions errors.
-     */
-    protected function isSheetEmpty(string $sheetName): bool
-    {
-        $keyColumn = config('laravel-translation.key_column', 'A');
-        $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-        $headerRow = config('laravel-translation.header_row', 1);
-
-        $range = "{$keyColumn}{$headerRow}:{$updatedValueColumn}";
-        $data = $this->sheetsService->getSheetData($sheetName, $range);
-
-        return empty($data) || count($data) <= 1;
-    }
-
-    /**
-     * Read sheet rows into a key=>[original,updated] map. Drops the header row.
-     *
-     * @return array<string,array{original:string,updated:string}>
-     */
-    protected function readExistingSheetData(string $sheetName): array
-    {
-        $keyColumn = config('laravel-translation.key_column', 'A');
-        $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-        $headerRow = config('laravel-translation.header_row', 1);
-
-        $range = "{$keyColumn}{$headerRow}:{$updatedValueColumn}";
-        $data = $this->sheetsService->getSheetData($sheetName, $range);
-
-        if ($headerRow && ! empty($data)) {
-            array_shift($data);
-        }
-
-        $existing = [];
-        foreach ($data as $row) {
-            if (empty($row[0])) {
-                continue;
-            }
-            $existing[$row[0]] = [
-                'original' => $row[1] ?? '',
-                'updated' => $row[2] ?? '',
-            ];
-        }
-
-        return $existing;
     }
 }

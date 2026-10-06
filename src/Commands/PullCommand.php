@@ -5,339 +5,171 @@ namespace PaperleafTech\LaravelTranslation\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Concerns\DiscoversLocales;
-use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Services\TranslationCatalogue;
 use PaperleafTech\LaravelTranslation\Services\TranslationFileWriter;
+use PaperleafTech\LaravelTranslation\Sheet\SheetContents;
+use PaperleafTech\LaravelTranslation\Sheet\TranslationSheet;
 use PaperleafTech\LaravelTranslation\Support\Placeholders;
 use PaperleafTech\LaravelTranslation\Support\TranslationConventions;
+use RuntimeException;
 
 class PullCommand extends Command
 {
     use DiscoversLocales;
 
-    protected $signature = 'translations:pull {lang? : Locale to pull (omit to pull all locales found under lang/)}
-        {--dry-run : Preview changes without writing files}';
+    protected $signature = 'translations:pull {locale? : Pull only this locale}
+        {--dry-run : Show what would change without writing files}';
 
-    protected $description = 'Pull updated translations from Google Sheets and apply them in-place to existing language files.';
+    protected $description = 'Pull translations from the translation sheet into existing lang files.';
 
-    public function __construct(
-        protected GoogleSheetsService $sheetsService,
-        protected TranslationFileWriter $writer,
-        protected TranslationCatalogue $catalogue,
-    ) {
-        parent::__construct();
-    }
-
-    public function handle(): int
+    public function handle(TranslationCatalogue $catalogue, TranslationSheet $sheet, TranslationFileWriter $writer): int
     {
-        $lang = $this->argument('lang');
-        $locales = $lang ? [$lang] : $this->discoverLocales();
+        $source = TranslationConventions::sourceLocale();
 
-        if (empty($locales)) {
-            $this->warn('No locales found under '.lang_path().'. Nothing to pull.');
-
-            return self::SUCCESS;
-        }
-
-        $failures = [];
-
-        foreach ($locales as $locale) {
-            try {
-                $ok = $this->pullLocale($locale);
-                if (! $ok) {
-                    $failures[] = $locale;
-                }
-            } catch (\Exception $e) {
-                $this->error("[{$locale}] Pull failed: ".$e->getMessage());
-                $failures[] = $locale;
-            }
-        }
-
-        if (! empty($failures)) {
-            $this->error('Failed locales: '.implode(', ', $failures));
+        try {
+            $contents = $sheet->read($source, $this->discoverLocales());
+        } catch (RuntimeException $e) {
+            $this->error($e->getMessage());
 
             return self::FAILURE;
         }
 
-        return self::SUCCESS;
-    }
+        if ($contents === null) {
+            $this->error('The spreadsheet has no "'.$sheet->name().'" tab. Run translations:push first.');
 
-    protected function pullLocale(string $locale): bool
-    {
-        $this->info('');
-        $this->info("=== {$locale} ===");
-
-        $sheetName = TranslationConventions::sheetNameFor($locale);
-
-        if ($this->sheetsService->getSheetId($sheetName) === null) {
-            $this->warn("Sheet tab '{$sheetName}' not found; skipping.");
-
-            return true;
+            return self::FAILURE;
         }
 
-        $langPath = lang_path($locale);
-        if (! File::isDirectory($langPath)) {
-            $this->warn("Language directory {$langPath} not found. Bootstrap the locale by adding starter files first, then re-pull.");
+        $locales = [$source, ...$contents->locales];
+        $requested = $this->argument('locale');
 
-            return true;
+        if ($requested !== null) {
+            if (! in_array($requested, $locales, true)) {
+                $this->error("The sheet has no \"{$requested}\" column with a matching ".lang_path($requested).' directory.');
+
+                return self::FAILURE;
+            }
+
+            $locales = [$requested];
         }
 
-        $sheetData = $this->readSheetData($sheetName);
-
-        if (empty($sheetData)) {
-            $this->warn('No data found in sheet tab.');
-
-            return true;
+        if ($contents->duplicates !== []) {
+            $this->warn('⚠ '.count($contents->duplicates).' duplicate row(s) in the sheet; used the first of each:');
+            foreach ($contents->duplicates as $label) {
+                $this->line("    - {$label}");
+            }
         }
 
-        $this->info('Found '.count($sheetData).' translation entries.');
+        [$updates, $rejected] = $this->collect($contents, $locales, $catalogue->appGroups($source));
 
-        $updates = $this->rejectPlaceholderMismatches($this->parseUpdates($sheetData, $locale), $locale);
-
-        if (empty($updates)) {
-            $this->warn('No translatable rows after filtering. Nothing to write.');
-
-            return true;
+        if ($rejected !== []) {
+            $this->warn('⚠ '.count($rejected)." value(s) rejected: their :placeholders differ from the {$source} line in code. Fix them in the sheet, then pull again.");
+            $this->table(['Locale', 'Key', 'Expected', 'Found'], $rejected);
         }
 
         if ($this->option('dry-run')) {
-            $this->info('DRY RUN - No files will be modified');
-            $this->displayPreview($langPath, $updates);
+            $this->info('Dry run: no files were changed.');
 
-            return true;
-        }
-
-        $this->applyUpdates($langPath, $updates);
-
-        $this->info("✓ Pulled {$locale}.");
-        $this->info('View tab: '.$this->sheetsService->getSpreadsheetUrl($sheetName));
-
-        return true;
-    }
-
-    protected function readSheetData(string $sheetName): array
-    {
-        $keyColumn = config('laravel-translation.key_column', 'A');
-        $updatedValueColumn = config('laravel-translation.updated_value_column', 'C');
-        $headerRow = config('laravel-translation.header_row', 1);
-
-        $range = "{$keyColumn}{$headerRow}:{$updatedValueColumn}";
-        $data = $this->sheetsService->getSheetData($sheetName, $range);
-
-        if ($headerRow && ! empty($data)) {
-            array_shift($data);
-        }
-
-        return $data;
-    }
-
-    /**
-     * Convert sheet rows to a flat key=>value map of updates.
-     * Source locale: prefer Column C, fall back to Column B.
-     * Non-source: only Column C; rows with empty C are skipped.
-     *
-     * @return array<string,string> Full dotted keys (e.g. 'auth.failed')
-     */
-    protected function parseUpdates(array $sheetData, string $locale): array
-    {
-        $isSource = TranslationConventions::isSourceLocale($locale);
-        $updates = [];
-
-        foreach ($sheetData as $row) {
-            if (empty($row[0])) {
-                continue;
-            }
-
-            $key = $row[0];
-            $originalValue = $row[1] ?? '';
-            $updatedValue = $row[2] ?? '';
-
-            if ($isSource) {
-                $value = $updatedValue !== '' ? $updatedValue : $originalValue;
-            } else {
-                if ($updatedValue === '') {
-                    continue;
+            foreach ($updates as $locale => $groups) {
+                foreach ($groups as $group => $values) {
+                    $this->line('  '.$this->relativePath(lang_path("{$locale}/{$group}.php")).' — '.count($values).' value(s) to apply');
                 }
-                $value = $updatedValue;
             }
 
-            $updates[$key] = $value;
+            return $rejected === [] ? self::SUCCESS : self::FAILURE;
         }
 
-        return $updates;
+        foreach ($updates as $locale => $groups) {
+            foreach ($groups as $group => $values) {
+                $this->apply($writer, $locale, (string) $group, $values);
+            }
+        }
+
+        $this->info('✓ Pulled from "'.$sheet->name().'".');
+
+        return $rejected === [] ? self::SUCCESS : self::FAILURE;
     }
 
     /**
-     * Drop updates whose :placeholders differ from the source line in code,
-     * which is what the code passes replacements to: a translation that
-     * drops or renames one would silently lose a name or number on the page.
+     * Non-blank cells to write, by locale and group, and the ones whose
+     * :placeholders differ from the source line in code, which is what the
+     * app passes replacements to.
      *
-     * @param  array<string,string>  $updates
-     * @return array<string,string>
+     * @param  list<string>  $locales
+     * @param  array<string, array<string, string>>  $sourceLines  group => key => line, from code
+     * @return array{0: array<string, array<string, array<string, string>>>, 1: list<array{0: string, 1: string, 2: string, 3: string}>}
      */
-    protected function rejectPlaceholderMismatches(array $updates, string $locale): array
+    protected function collect(SheetContents $contents, array $locales, array $sourceLines): array
     {
-        $sourceLocale = TranslationConventions::SOURCE_LOCALE;
-        $source = $this->sourceLinesBySheetKey();
+        $updates = [];
         $rejected = [];
 
-        foreach ($updates as $key => $value) {
-            if (isset($source[$key]) && ! Placeholders::match($source[$key], $value)) {
-                $rejected[] = sprintf(
-                    '%s: %s has [%s], %s has [%s]',
-                    $key,
-                    $sourceLocale,
-                    implode(', ', Placeholders::in($source[$key])),
-                    $locale,
-                    implode(', ', Placeholders::in($value)),
-                );
-                unset($updates[$key]);
-            }
-        }
-
-        if (! empty($rejected)) {
-            $this->warn('  ⚠ Skipped '.count($rejected)." row(s) whose :placeholders differ from {$sourceLocale} (fix them in the sheet, then re-pull):");
-            foreach ($rejected as $line) {
-                $this->line("      - {$line}");
-            }
-        }
-
-        return $updates;
-    }
-
-    /**
-     * Source-locale lines keyed as push writes them to the sheet: the file's
-     * path with dots for slashes, then the dotted key within it.
-     *
-     * @return array<string,string>
-     */
-    protected function sourceLinesBySheetKey(): array
-    {
-        $lines = [];
-
-        foreach ($this->catalogue->lines(TranslationConventions::SOURCE_LOCALE) as $group => $groupLines) {
-            if ($group === TranslationCatalogue::JSON_GROUP) {
+        foreach ($contents->rows as $row) {
+            if ($row->group === '' || $row->key === '' || $row->group === TranslationCatalogue::JSON_GROUP || str_contains($row->group, '::')) {
                 continue;
             }
 
-            $prefix = str_replace('/', '.', $group);
+            $reference = $sourceLines[$row->group][$row->key] ?? null;
 
-            foreach ($groupLines as $key => $line) {
-                $lines["{$prefix}.{$key}"] = $line;
+            foreach ($locales as $locale) {
+                $value = $row->value($locale);
+
+                if ($value === '') {
+                    continue;
+                }
+
+                if ($reference !== null && ! Placeholders::match($reference, $value)) {
+                    $rejected[] = [$locale, $row->label(), $this->placeholderList($reference), $this->placeholderList($value)];
+
+                    continue;
+                }
+
+                $updates[$locale][$row->group][$row->key] = $value;
             }
         }
 
-        return $lines;
+        return [$updates, $rejected];
     }
 
     /**
-     * Group full keys by the file they belong to (see splitKey()) and
-     * delegate per-file updates to the file writer. Reports stats afterward.
-     *
-     * @param  array<string,string>  $updates
+     * @param  array<string, string>  $values
      */
-    protected function applyUpdates(string $langPath, array $updates): void
+    protected function apply(TranslationFileWriter $writer, string $locale, string $group, array $values): void
     {
-        $byFile = [];
-        foreach ($updates as $fullKey => $value) {
-            if (! str_contains($fullKey, '.')) {
-                $this->warn("Skipped '{$fullKey}': key has no file segment (must be of the form '<file>.<key>').");
+        $filePath = lang_path("{$locale}/{$group}.php");
+        $relPath = $this->relativePath($filePath);
+        $stats = $writer->updateFile($filePath, $values);
 
-                continue;
-            }
-            [$file, $relative] = $this->splitKey($langPath, $fullKey);
-            $byFile[$file][$relative] = $value;
+        if ($stats['updated'] !== []) {
+            $this->info('  ✓ Updated '.count($stats['updated'])." key(s) in {$relPath}");
         }
 
-        foreach ($byFile as $file => $fileUpdates) {
-            $filePath = "{$langPath}/{$file}.php";
-            $stats = $this->writer->updateFile($filePath, $fileUpdates);
-
-            $relPath = $this->relativePath($filePath);
-
-            if (! empty($stats['updated'])) {
-                $this->info('  ✓ Updated '.count($stats['updated'])." key(s) in {$relPath}");
+        if ($stats['skipped_missing'] !== [] && ! File::exists($filePath)) {
+            $this->warn("  ⚠ {$relPath} not found; ".count($stats['skipped_missing']).' key(s) skipped (add the file with starter keys, then pull again).');
+        } elseif ($stats['skipped_missing'] !== []) {
+            $this->warn('  ⚠ Skipped '.count($stats['skipped_missing'])." key(s) not in {$relPath} (add them in code first, then pull again):");
+            foreach ($stats['skipped_missing'] as $key) {
+                $this->line("      - {$group}.{$key}");
             }
+        }
 
-            $isMissing = ! File::exists($filePath);
-            if ($isMissing && ! empty($stats['skipped_missing'])) {
-                $this->warn("  ⚠ {$relPath} not found; ".count($stats['skipped_missing']).' key(s) skipped (add the file with starter keys, then re-pull).');
-            } elseif (! empty($stats['skipped_missing'])) {
-                $count = count($stats['skipped_missing']);
-                $this->warn("  ⚠ Skipped {$count} new key(s) in {$relPath} (add to code first, then re-pull):");
-                foreach ($stats['skipped_missing'] as $relative) {
-                    $this->line("      - {$file}.{$relative}");
-                }
-            }
-
-            if (! empty($stats['skipped_non_string'])) {
-                $count = count($stats['skipped_non_string']);
-                $this->warn("  ⚠ Skipped {$count} key(s) in {$relPath} with non-string values:");
-                foreach ($stats['skipped_non_string'] as $relative) {
-                    $this->line("      - {$file}.{$relative}");
-                }
+        if ($stats['skipped_non_string'] !== []) {
+            $this->warn('  ⚠ Skipped '.count($stats['skipped_non_string'])." key(s) in {$relPath} whose value in code is not a plain string:");
+            foreach ($stats['skipped_non_string'] as $key) {
+                $this->line("      - {$group}.{$key}");
             }
         }
     }
 
-    /**
-     * Split a dotted sheet key into the file it belongs to (relative to the
-     * locale directory, without extension) and the key within that file.
-     * Push flattens subdirectories into the key, so `resources.schools.title`
-     * may live in `resources/schools.php`; the deepest existing file wins.
-     * Falls back to the first segment when no file matches, so a missing
-     * file is still reported.
-     *
-     * @return array{0:string,1:string}
-     */
-    protected function splitKey(string $langPath, string $fullKey): array
+    protected function placeholderList(string $line): string
     {
-        $segments = explode('.', $fullKey);
-
-        for ($depth = count($segments) - 1; $depth > 1; $depth--) {
-            $file = implode('/', array_slice($segments, 0, $depth));
-
-            if (File::exists("{$langPath}/{$file}.php")) {
-                return [$file, implode('.', array_slice($segments, $depth))];
-            }
-        }
-
-        return explode('.', $fullKey, 2);
+        return '['.implode(', ', Placeholders::in($line)).']';
     }
 
     protected function relativePath(string $absolutePath): string
     {
-        $base = base_path();
-        if (str_starts_with($absolutePath, $base.DIRECTORY_SEPARATOR)) {
-            return substr($absolutePath, strlen($base) + 1);
-        }
+        $base = base_path().DIRECTORY_SEPARATOR;
 
-        return $absolutePath;
-    }
-
-    /**
-     * @param  array<string,string>  $updates
-     */
-    protected function displayPreview(string $langPath, array $updates): void
-    {
-        $byFile = [];
-        foreach ($updates as $fullKey => $_) {
-            if (! str_contains($fullKey, '.')) {
-                continue;
-            }
-            [$file] = $this->splitKey($langPath, $fullKey);
-            $byFile[$file] = ($byFile[$file] ?? 0) + 1;
-        }
-
-        $this->line('');
-        $this->line('Preview of files that would be checked for updates:');
-        $this->line('');
-
-        foreach ($byFile as $file => $count) {
-            $this->line("  📄 {$file}.php — {$count} key(s) candidate for update");
-        }
-
-        $this->line('');
-        $this->info('Run without --dry-run to apply these changes.');
+        return str_starts_with($absolutePath, $base) ? substr($absolutePath, strlen($base)) : $absolutePath;
     }
 }

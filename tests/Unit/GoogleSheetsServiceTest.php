@@ -2,8 +2,14 @@
 
 namespace PaperleafTech\LaravelTranslation\Tests\Unit;
 
+use Google\Service\Sheets;
+use Google\Service\Sheets\Resource\Spreadsheets;
+use Google\Service\Sheets\Resource\SpreadsheetsValues;
+use Google\Service\Sheets\Spreadsheet;
+use Google\Service\Sheets\ValueRange;
 use PaperleafTech\LaravelTranslation\Services\GoogleSheetsService;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class GoogleSheetsServiceTest extends TestCase
 {
@@ -12,10 +18,10 @@ class GoogleSheetsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new GoogleSheetsService();
+        $this->service = new GoogleSheetsService;
     }
 
-    /** @test */
+    #[Test]
     public function it_can_get_service_account_email(): void
     {
         $email = $this->service->getServiceAccountEmail();
@@ -24,7 +30,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->assertEquals('test@test-project.iam.gserviceaccount.com', $email);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_generate_spreadsheet_url(): void
     {
         $url = $this->service->getSpreadsheetUrl();
@@ -32,7 +38,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->assertEquals('https://docs.google.com/spreadsheets/d/test-spreadsheet-id/edit', $url);
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_configuration_on_initialization(): void
     {
         config()->set('laravel-translation.spreadsheet_id', null);
@@ -43,7 +49,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->service->getSpreadsheetUrl();
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_credentials_file_exists(): void
     {
         config()->set('laravel-translation.credentials_path', '/non/existent/path.json');
@@ -54,7 +60,7 @@ class GoogleSheetsServiceTest extends TestCase
         $this->service->getSpreadsheetUrl();
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_credentials_json_format(): void
     {
         $invalidJsonPath = __DIR__.'/../fixtures/invalid.json';
@@ -71,7 +77,7 @@ class GoogleSheetsServiceTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_validates_service_account_type(): void
     {
         $wrongTypePath = __DIR__.'/../fixtures/wrong-type.json';
@@ -88,7 +94,7 @@ class GoogleSheetsServiceTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_qualifies_ranges_with_sheet_name(): void
     {
         $this->assertSame(
@@ -97,12 +103,53 @@ class GoogleSheetsServiceTest extends TestCase
         );
     }
 
-    /** @test */
+    #[Test]
     public function it_escapes_single_quotes_inside_sheet_names(): void
     {
         $this->assertSame(
             "'it''s'!A1:C",
             GoogleSheetsService::qualifyRange("it's", 'A1:C')
         );
+    }
+
+    /**
+     * Swap the API client for one whose resources are the given mocks.
+     */
+    private function withApi(?SpreadsheetsValues $values = null, ?Spreadsheets $spreadsheets = null): void
+    {
+        $api = $this->createStub(Sheets::class);
+        $api->spreadsheets_values = $values ?? $this->createStub(SpreadsheetsValues::class);
+        $api->spreadsheets = $spreadsheets ?? $this->createStub(Spreadsheets::class);
+
+        $set = fn (string $property, mixed $value) => (fn () => $this->{$property} = $value)->call($this->service);
+        $set('service', $api);
+        $set('spreadsheetId', 'test-spreadsheet-id');
+        $set('initialized', true);
+    }
+
+    #[Test]
+    public function it_reads_a_whole_tab_by_its_quoted_name(): void
+    {
+        $values = $this->createMock(SpreadsheetsValues::class);
+        $values->expects($this->once())->method('get')
+            ->with('test-spreadsheet-id', "'it''s'")
+            ->willReturn(new ValueRange(['values' => [['key', 'group']]]));
+        $this->withApi(values: $values);
+
+        $this->assertSame([['key', 'group']], $this->service->getSheetValues("it's"));
+    }
+
+    #[Test]
+    public function it_fetches_the_grid_size_with_a_tab(): void
+    {
+        $spreadsheets = $this->createMock(Spreadsheets::class);
+        $spreadsheets->expects($this->once())->method('get')
+            ->with('test-spreadsheet-id', $this->callback(fn (array $params): bool => str_contains($params['fields'], 'properties(sheetId,title,gridProperties(rowCount,columnCount))')))
+            ->willReturn(new Spreadsheet(['sheets' => [['properties' => ['sheetId' => 3, 'title' => 'Translations', 'gridProperties' => ['rowCount' => 1000, 'columnCount' => 26]]]]]));
+        $this->withApi(spreadsheets: $spreadsheets);
+
+        $grid = $this->service->getSheet('Translations')->getProperties()->getGridProperties();
+
+        $this->assertSame([1000, 26], [$grid->getRowCount(), $grid->getColumnCount()]);
     }
 }

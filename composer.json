@@ -2,7 +2,7 @@
   "name": "paper-leaf-tech/laravel-translation",
   "description": "Manage laravel translation strings using Google Sheets",
   "license": "MIT",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "require": {
     "php": "^8.2",
     "spatie/laravel-package-tools": "^1.92",
@@ -22,8 +22,8 @@
   ],
   "require-dev": {
     "laravel/pint": "^1.24",
-    "orchestra/testbench": "^9.0",
-    "phpunit/phpunit": "^11.0",
+    "orchestra/testbench": "^9.0|^10.0|^11.0",
+    "phpunit/phpunit": "^11.5|^12.5",
     "mockery/mockery": "^1.6"
   },
   "autoload-dev": {
@@ -48,4 +48,3 @@
     ]
   }
 }
-

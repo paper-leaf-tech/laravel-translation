@@ -2,34 +2,22 @@
 
 namespace PaperleafTech\LaravelTranslation\Tests\Feature;
 
-use Illuminate\Support\Facades\File;
 use PaperleafTech\LaravelTranslation\Tests\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 
 class CheckCommandTest extends TestCase
 {
-    protected string $langPath;
-
     protected string $packagePath;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->langPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'laravel-translation-check-'.uniqid();
-        $this->packagePath = $this->langPath.'-package';
-
-        $this->app->useLangPath($this->langPath);
+        $this->useTemporaryLangPath();
+        $this->packagePath = $this->temporaryDirectory('package');
     }
 
-    protected function tearDown(): void
-    {
-        File::deleteDirectory($this->langPath);
-        File::deleteDirectory($this->packagePath);
-
-        parent::tearDown();
-    }
-
-    /** @test */
+    #[Test]
     public function it_passes_when_every_locale_matches_the_source(): void
     {
         $this->writeLangFiles([
@@ -46,7 +34,7 @@ class CheckCommandTest extends TestCase
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_accepts_a_placeholder_whose_capitalisation_differs(): void
     {
         $this->writeLangFiles([
@@ -57,7 +45,7 @@ class CheckCommandTest extends TestCase
         $this->artisan('translations:check')->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_fails_when_a_key_is_missing_from_the_target(): void
     {
         $this->writeLangFiles([
@@ -72,7 +60,7 @@ class CheckCommandTest extends TestCase
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_fails_when_a_key_is_only_in_the_target(): void
     {
         $this->writeLangFiles([
@@ -85,7 +73,7 @@ class CheckCommandTest extends TestCase
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_fails_when_a_json_line_is_missing_from_the_target(): void
     {
         $this->writeLangFiles([
@@ -98,7 +86,7 @@ class CheckCommandTest extends TestCase
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_fails_when_a_line_drops_or_renames_a_placeholder(): void
     {
         foreach ([':name occupe déjà ce rôle ici.', ':nom occupe déjà le rôle :role ici.'] as $french) {
@@ -113,7 +101,7 @@ class CheckCommandTest extends TestCase
         }
     }
 
-    /** @test */
+    #[Test]
     public function it_reports_missing_keys_without_failing_when_allowed(): void
     {
         $this->writeLangFiles([
@@ -126,7 +114,7 @@ class CheckCommandTest extends TestCase
             ->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_still_fails_on_placeholders_when_missing_keys_are_allowed(): void
     {
         $this->writeLangFiles([
@@ -137,7 +125,7 @@ class CheckCommandTest extends TestCase
         $this->artisan('translations:check', ['--allow-missing' => true])->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_checks_every_target_locale_or_only_the_one_given(): void
     {
         $this->writeLangFiles([
@@ -153,7 +141,7 @@ class CheckCommandTest extends TestCase
         $this->artisan('translations:check', ['lang' => 'fr'])->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_checks_a_package_override_merged_over_the_package_lines(): void
     {
         $this->app['translator']->addNamespace('demo', $this->packagePath);
@@ -175,7 +163,7 @@ class CheckCommandTest extends TestCase
             ->assertFailed();
     }
 
-    /** @test */
+    #[Test]
     public function it_ignores_stale_keys_a_package_ships_only_in_the_target(): void
     {
         $this->app['translator']->addNamespace('demo', $this->packagePath);
@@ -190,7 +178,7 @@ class CheckCommandTest extends TestCase
         $this->artisan('translations:check')->assertSuccessful();
     }
 
-    /** @test */
+    #[Test]
     public function it_ignores_packages_without_an_override_for_the_locale(): void
     {
         $this->app['translator']->addNamespace('demo', $this->packagePath);
@@ -207,18 +195,34 @@ class CheckCommandTest extends TestCase
         $this->artisan('translations:check')->assertSuccessful();
     }
 
-    /**
-     * @param  array<string, array<array-key, mixed>>  $files  paths relative to the lang root
-     */
-    protected function writeLangFiles(array $files, ?string $root = null): void
+    #[Test]
+    public function it_compares_against_the_configured_source_locale(): void
     {
-        foreach ($files as $file => $contents) {
-            $path = ($root ?? lang_path()).'/'.$file;
+        config()->set('laravel-translation.source_locale', 'en_CA');
 
-            File::ensureDirectoryExists(dirname($path));
-            File::put($path, str_ends_with($file, '.json')
-                ? json_encode($contents, JSON_THROW_ON_ERROR)
-                : '<?php return '.var_export($contents, true).';');
-        }
+        $this->writeLangFiles([
+            'en_CA/common.php' => ['save' => 'Save', 'cancel' => 'Cancel'],
+            'fr_CA/common.php' => ['save' => 'Enregistrer'],
+        ]);
+
+        $this->artisan('translations:check')
+            ->expectsOutputToContain('Missing from fr_CA')
+            ->doesntExpectOutputToContain('=== en_CA ===')
+            ->assertFailed();
+    }
+
+    #[Test]
+    public function it_checks_json_lines_without_a_source_json_file(): void
+    {
+        $this->writeLangFiles([
+            'en/common.php' => ['save' => 'Save'],
+            'fr/common.php' => ['save' => 'Enregistrer'],
+            'fr.json' => ['Hello, :name!' => 'Bonjour !'],
+        ]);
+
+        $this->artisan('translations:check')
+            ->expectsOutputToContain('Placeholders differ: en has [name], fr has []')
+            ->doesntExpectOutputToContain('Not in en')
+            ->assertFailed();
     }
 }
