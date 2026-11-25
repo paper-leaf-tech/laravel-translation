@@ -2,7 +2,7 @@
   "name": "paper-leaf-tech/laravel-translation",
   "description": "Manage laravel translation strings using Google Sheets",
   "license": "MIT",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "require": {
     "php": "^8.2",
     "spatie/laravel-package-tools": "^1.92",
@@ -16,7 +16,7 @@
   },
   "authors": [
       {
-          "name": "Brendan Angermna",
+          "name": "Brendan Angerman",
           "email": "brendan@paper-leaf.com"
       }
   ],

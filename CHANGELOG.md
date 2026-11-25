@@ -4,6 +4,11 @@ All notable changes to `laravel-translation` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-25
+
+### Fixed
+- Corrected the author name in `composer.json`.
+
 ## [0.5.0] - 2026-10-05
 
 ### Breaking Changes
